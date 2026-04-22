@@ -14,13 +14,19 @@ export type ChatMedia = {
   name: string;
   type: string;
   size: number;
+  url: string;
+  kind: "image" | "video" | "audio" | "file";
 };
 
 export type ChatMessage = {
   id: string;
   author: string;
+  authorEmail: string;
+  authorName: string;
   text: string;
+  html?: string;
   createdAt: string;
+  updatedAt?: string;
   media: ChatMedia[];
 };
 

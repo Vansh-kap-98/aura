@@ -4,10 +4,12 @@ import { PulseCalendar } from "@/components/PulseCalendar";
 import { SocialPanel } from "@/components/SocialPanel";
 import { NotificationsDock } from "@/components/NotificationsDock";
 import { useAuth } from "@/context/AuthContext";
+import { readNickname } from "@/lib/workspace-storage";
 import {
   Channel,
   Team,
   WorkspaceEvent,
+  ChatMessage,
 } from "@/types/collab";
 
 const TEAMS_KEY = "mesh_teams";
@@ -26,6 +28,29 @@ const createDefaultChannel = (name: string): Channel => ({
     },
   },
   messages: [],
+});
+
+const normalizeChatMessage = (
+  message: Partial<ChatMessage> & { author?: string },
+  fallbackAuthorEmail: string,
+  fallbackAuthorName: string
+): ChatMessage => ({
+  id: message.id ?? crypto.randomUUID(),
+  author: message.author ?? fallbackAuthorName,
+  authorEmail: message.authorEmail ?? message.author ?? fallbackAuthorEmail,
+  authorName: message.authorName ?? message.author ?? fallbackAuthorName,
+  text: message.text ?? "",
+  html: message.html,
+  createdAt: message.createdAt ?? new Date().toISOString(),
+  updatedAt: message.updatedAt,
+  media: (message.media ?? []).map((media) => ({
+    id: media.id ?? crypto.randomUUID(),
+    name: media.name ?? "attachment",
+    type: media.type ?? "application/octet-stream",
+    size: media.size ?? 0,
+    url: media.url ?? "",
+    kind: media.kind ?? "file",
+  })),
 });
 
 const normalizeTeam = (raw: Team, fallbackLeader: string): Team => {
@@ -61,7 +86,9 @@ const normalizeTeam = (raw: Team, fallbackLeader: string): Team => {
             }
           : channel.settings?.hidden,
     },
-    messages: channel.messages ?? [],
+    messages: (channel.messages ?? []).map((message) =>
+      normalizeChatMessage(message, fallbackLeader, fallbackLeader)
+    ),
   }));
 
   const hasGeneral = channels.some((c) => c.name === "general");
@@ -81,6 +108,9 @@ const normalizeTeam = (raw: Team, fallbackLeader: string): Team => {
 const Index = () => {
   const { user } = useAuth();
   const userEmail = user?.email ?? "demo@syncro.app";
+  const [userDisplayName, setUserDisplayName] = useState(
+    () => readNickname(userEmail) || userEmail
+  );
 
   const [teams, setTeams] = useState<Team[]>(() => {
     try {
@@ -107,6 +137,10 @@ const Index = () => {
   const [openTextChannels, setOpenTextChannels] = useState<
     Array<{ teamId: string; channelId: string }>
   >([]);
+
+  useEffect(() => {
+    setUserDisplayName(readNickname(userEmail) || userEmail);
+  }, [userEmail]);
 
   useEffect(() => {
     localStorage.setItem(TEAMS_KEY, JSON.stringify(teams));
@@ -156,6 +190,8 @@ const Index = () => {
           onOpenTextChannel={openChannelChat}
           onAddEvent={(event) => setEvents((prev) => [...prev, event])}
           userEmail={userEmail}
+          userDisplayName={userDisplayName}
+          onUserDisplayNameChange={setUserDisplayName}
         />
         <PulseCalendar
           events={events}
@@ -166,12 +202,14 @@ const Index = () => {
           closeTextChannel={closeChannelChat}
           setTeams={setTeams}
           userEmail={userEmail}
+          userDisplayName={userDisplayName}
         />
         <SocialPanel
           activeTeam={activeTeam}
           setTeams={setTeams}
           onOpenTextChannel={openChannelChat}
           userEmail={userEmail}
+          userDisplayName={userDisplayName}
         />
       </div>
       <NotificationsDock events={events} teams={teams} />

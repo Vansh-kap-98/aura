@@ -11,6 +11,9 @@ import {
   Paperclip,
   Send,
   MessageCircle,
+  Mic,
+  ArrowRight,
+  Sliders,
 } from "lucide-react";
 import {
   format,
@@ -24,6 +27,7 @@ import {
   parseISO,
 } from "date-fns";
 import { cn } from "@/lib/utils";
+import { filesToMedia, htmlToPlainText, sanitizeRichTextHtml } from "@/lib/message-utils";
 import { Team, WorkspaceEvent, WorkspaceEventType } from "@/types/collab";
 
 type PulseCalendarProps = {
@@ -35,6 +39,7 @@ type PulseCalendarProps = {
   closeTextChannel: (teamId: string, channelId: string) => void;
   setTeams: Dispatch<SetStateAction<Team[]>>;
   userEmail: string;
+  userDisplayName: string;
 };
 
 type ChatWindowLayout = {
@@ -43,6 +48,27 @@ type ChatWindowLayout = {
   width: number;
   height: number;
 };
+
+type EditingMessageState = {
+  teamId: string;
+  channelId: string;
+  messageId: string;
+  html: string;
+};
+
+type PendingDeleteState = {
+  teamId: string;
+  channelId: string;
+  messageId: string;
+};
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 
 const EVENT_TYPES: {
   type: WorkspaceEventType;
@@ -101,6 +127,7 @@ export const PulseCalendar = ({
   closeTextChannel,
   setTeams,
   userEmail,
+  userDisplayName,
 }: PulseCalendarProps) => {
   const [currentMonth, setCurrentMonth] = useState(() => startOfMonth(new Date()));
 
@@ -116,12 +143,19 @@ export const PulseCalendar = ({
   const [modalScope, setModalScope] = useState<"personal" | "space">("personal");
 
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [editingMessage, setEditingMessage] = useState<EditingMessageState | null>(null);
+  const [pendingDeleteMessage, setPendingDeleteMessage] = useState<PendingDeleteState | null>(null);
+  const [showFormattingToolbar, setShowFormattingToolbar] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState<string | null>(null);
   const [windowLayouts, setWindowLayouts] = useState<Record<string, ChatWindowLayout>>({});
   const dragRef = useRef<{
     key: string;
     offsetX: number;
     offsetY: number;
   } | null>(null);
+
+  const composerRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const editRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const resizeRef = useRef<{
     key: string;
     startX: number;
@@ -192,6 +226,59 @@ export const PulseCalendar = ({
       })
       .filter((entry): entry is { team: Team; channel: Team["channels"][number] } => !!entry);
   }, [openTextChannels, teams]);
+
+  useEffect(() => {
+    openChats.forEach((entry) => {
+      const key = entry.channel.id;
+      const editor = composerRefs.current[key];
+      const html = drafts[key] ?? "";
+      if (editor && editor.innerHTML !== html) {
+        editor.innerHTML = html;
+      }
+    });
+  }, [drafts, openChats]);
+
+  useEffect(() => {
+    if (!editingMessage) return;
+    const editor = editRefs.current[editingMessage.messageId];
+    if (editor && editor.innerHTML !== editingMessage.html) {
+      editor.innerHTML = editingMessage.html;
+    }
+  }, [editingMessage]);
+
+  const updateComposerHtml = (channelId: string, html: string) => {
+    setDrafts((prev) => ({ ...prev, [channelId]: sanitizeRichTextHtml(html) }));
+  };
+
+  const runComposerCommand = (channelId: string, command: string, value?: string) => {
+    const editor = composerRefs.current[channelId];
+    if (!editor) return;
+    
+    editor.focus();
+    
+    // Apply the command without moving cursor
+    document.execCommand(command, false, value);
+    updateComposerHtml(channelId, editor.innerHTML);
+  };
+
+  const runEditCommand = (messageId: string, command: string, value?: string) => {
+    const editor = editRefs.current[messageId];
+    if (!editor) return;
+    
+    editor.focus();
+    
+    // Apply the command without moving cursor
+    document.execCommand(command, false, value);
+    setEditingMessage((prev) =>
+      prev && prev.messageId === messageId
+        ? { ...prev, html: sanitizeRichTextHtml(editor.innerHTML) }
+        : prev
+    );
+  };
+
+  const startEditMessage = (teamId: string, channelId: string, messageId: string, html: string) => {
+    setEditingMessage({ teamId, channelId, messageId, html });
+  };
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -321,10 +408,18 @@ export const PulseCalendar = ({
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  const postMessage = (teamId: string, channelId: string, text: string, files: File[]) => {
-    const trimmed = text.trim();
-    if (!trimmed && files.length === 0) return;
+  const handlePostMessage = async (
+    teamId: string,
+    channelId: string,
+    html: string,
+    files: File[]
+  ) => {
+    const safeHtml = sanitizeRichTextHtml(html);
+    const plainText = htmlToPlainText(safeHtml);
+    const media = files.length > 0 ? await filesToMedia(files) : [];
+    if (!plainText && media.length === 0) return;
 
+    const createdAt = new Date().toISOString();
     setTeams((prev) =>
       prev.map((team) =>
         team.id !== teamId
@@ -340,15 +435,13 @@ export const PulseCalendar = ({
                         ...channel.messages,
                         {
                           id: crypto.randomUUID(),
-                          author: userEmail,
-                          text: trimmed,
-                          createdAt: new Date().toISOString(),
-                          media: files.map((file) => ({
-                            id: crypto.randomUUID(),
-                            name: file.name,
-                            type: file.type || "application/octet-stream",
-                            size: file.size,
-                          })),
+                          author: userDisplayName,
+                          authorEmail: userEmail,
+                          authorName: userDisplayName,
+                          text: plainText,
+                          html: safeHtml || undefined,
+                          createdAt,
+                          media,
                         },
                       ],
                     }
@@ -358,6 +451,116 @@ export const PulseCalendar = ({
     );
 
     setDrafts((prev) => ({ ...prev, [channelId]: "" }));
+    const composer = composerRefs.current[channelId];
+    if (composer) composer.innerHTML = "";
+  };
+
+  const updateMessage = (
+    teamId: string,
+    channelId: string,
+    messageId: string,
+    html: string
+  ) => {
+    const safeHtml = sanitizeRichTextHtml(html);
+    setTeams((prev) =>
+      prev.map((team) =>
+        team.id !== teamId
+          ? team
+          : {
+              ...team,
+              channels: team.channels.map((channel) =>
+                channel.id !== channelId
+                  ? channel
+                  : {
+                      ...channel,
+                      messages: channel.messages.map((message) =>
+                        message.id !== messageId
+                          ? message
+                          : {
+                              ...message,
+                              text: htmlToPlainText(safeHtml),
+                              html: safeHtml || undefined,
+                              updatedAt: new Date().toISOString(),
+                            }
+                      ),
+                    }
+              ),
+            }
+      )
+    );
+    setEditingMessage(null);
+  };
+
+  const deleteMessage = (teamId: string, channelId: string, messageId: string) => {
+    setPendingDeleteMessage({ teamId, channelId, messageId });
+  };
+
+  const confirmDeleteMessage = () => {
+    if (!pendingDeleteMessage) return;
+    const { teamId, channelId, messageId } = pendingDeleteMessage;
+
+    setTeams((prev) =>
+      prev.map((team) =>
+        team.id !== teamId
+          ? team
+          : {
+              ...team,
+              channels: team.channels.map((channel) =>
+                channel.id !== channelId
+                  ? channel
+                  : {
+                      ...channel,
+                      messages: channel.messages.filter((message) => message.id !== messageId),
+                    }
+              ),
+            }
+      )
+    );
+
+    setEditingMessage((prev) => (prev?.messageId === messageId ? null : prev));
+    setPendingDeleteMessage(null);
+  };
+
+  const cancelDeleteMessage = () => {
+    setPendingDeleteMessage(null);
+  };
+
+  const renderMessageBody = (messageHtml?: string, messageText?: string) => {
+    const safeHtml = messageHtml ? sanitizeRichTextHtml(messageHtml) : escapeHtml(messageText ?? "").replace(/\n/g, "<br />");
+    return <span dangerouslySetInnerHTML={{ __html: safeHtml }} />;
+  };
+
+  const renderMediaPreview = (media: NonNullable<(typeof openChats)[number]>["channel"]["messages"][number]["media"][number]) => {
+    if (media.kind === "image") {
+      return (
+        <img
+          src={media.url}
+          alt={media.name}
+          className="max-h-40 w-full rounded-lg object-cover"
+        />
+      );
+    }
+
+    if (media.kind === "video") {
+      return <video controls src={media.url} className="max-h-40 w-full rounded-lg" />;
+    }
+
+    if (media.kind === "audio") {
+      return <audio controls src={media.url} className="w-full" />;
+    }
+
+    return (
+      <a
+        href={media.url}
+        download={media.name}
+        className="block rounded-lg bg-background/70 px-2 py-1 text-left"
+      >
+        <p className="truncate">{media.name}</p>
+        <p className="text-muted-foreground text-[10px]">
+          {(media.size / 1024).toFixed(1)} KB
+        </p>
+      </a>
+    );
   };
 
   return (
@@ -686,6 +889,7 @@ export const PulseCalendar = ({
       {openChats.map((entry, idx) => {
         const key = `${entry.team.id}-${entry.channel.id}`;
         const draft = drafts[entry.channel.id] ?? "";
+        const draftIsEmpty = htmlToPlainText(draft).length === 0;
         const layout = windowLayouts[key] ?? {
           left: Math.max(16, window.innerWidth - 368 - idx * 24),
           top: Math.max(16, window.innerHeight - 320 - idx * 24),
@@ -713,43 +917,43 @@ export const PulseCalendar = ({
             />
             {/* Top edge */}
             <div
-              className="absolute top-0 left-0 right-0 h-1 cursor-n-resize pointer-events-auto"
+              className="absolute top-0 left-0 right-0 h-1.5 cursor-n-resize pointer-events-auto hover:bg-primary/30"
               onPointerDown={(e) => startResizing(key, "top", e)}
             />
             {/* Bottom edge */}
             <div
-              className="absolute bottom-0 left-0 right-0 h-1 cursor-s-resize pointer-events-auto"
+              className="absolute bottom-0 left-0 right-0 h-1.5 cursor-s-resize pointer-events-auto hover:bg-primary/30"
               onPointerDown={(e) => startResizing(key, "bottom", e)}
             />
             {/* Left edge */}
             <div
-              className="absolute top-0 bottom-0 left-0 w-1 cursor-w-resize pointer-events-auto"
+              className="absolute top-0 bottom-0 left-0 w-1.5 cursor-w-resize pointer-events-auto hover:bg-primary/30"
               onPointerDown={(e) => startResizing(key, "left", e)}
             />
             {/* Right edge */}
             <div
-              className="absolute top-0 bottom-0 right-0 w-1 cursor-e-resize pointer-events-auto"
+              className="absolute top-0 bottom-0 right-0 w-1.5 cursor-e-resize pointer-events-auto hover:bg-primary/30"
               onPointerDown={(e) => startResizing(key, "right", e)}
             />
             {/* Top-left corner */}
             <div
-              className="absolute top-0 left-0 w-2 h-2 cursor-nw-resize pointer-events-auto"
+              className="absolute top-0 left-0 w-3 h-3 cursor-nw-resize pointer-events-auto hover:bg-primary/40 transition-colors"
               onPointerDown={(e) => startResizing(key, "top-left", e)}
             />
             {/* Top-right corner */}
             <div
-              className="absolute top-0 right-0 w-2 h-2 cursor-ne-resize pointer-events-auto"
+              className="absolute top-0 right-0 w-3 h-3 cursor-ne-resize pointer-events-auto hover:bg-primary/40 transition-colors"
               style={{ zIndex: 5 }}
               onPointerDown={(e) => startResizing(key, "top-right", e)}
             />
             {/* Bottom-left corner */}
             <div
-              className="absolute bottom-0 left-0 w-2 h-2 cursor-sw-resize pointer-events-auto"
+              className="absolute bottom-0 left-0 w-3 h-3 cursor-sw-resize pointer-events-auto hover:bg-primary/40 transition-colors"
               onPointerDown={(e) => startResizing(key, "bottom-left", e)}
             />
             {/* Bottom-right corner */}
             <div
-              className="absolute bottom-0 right-0 w-2 h-2 cursor-se-resize pointer-events-auto"
+              className="absolute bottom-0 right-0 w-3 h-3 cursor-se-resize pointer-events-auto hover:bg-primary/40 transition-colors"
               onPointerDown={(e) => startResizing(key, "bottom-right", e)}
             />
 
@@ -784,91 +988,349 @@ export const PulseCalendar = ({
               )}
 
               {entry.channel.messages.map((msg) => {
-                const isUserMessage = msg.author === userEmail;
+                const isUserMessage =
+                  msg.authorEmail === userEmail || msg.author === userEmail;
                 const isLeaderMessage = msg.author === entry.team.leaderEmail;
-                const isImportant = msg.text?.includes("@Important");
+                const isImportant = (msg.text ?? msg.html ?? "").includes("@Important");
                 const shouldBeGold = isLeaderMessage && isImportant;
+                const isEditing = editingMessage?.messageId === msg.id;
+                const displayName = msg.authorName || msg.author || msg.authorEmail;
 
                 return (
-                  <div
-                    key={msg.id}
-                    className={cn(
-                      "rounded-xl px-2.5 py-2 text-xs",
-                      isUserMessage ? "ml-auto max-w-xs bg-primary/20 text-right" : "mr-auto max-w-xs bg-muted/60",
-                      shouldBeGold && "bg-amber-500/30 ring-1 ring-amber-400/50"
-                    )}
-                  >
-                    <p
+                  <div key={msg.id} className={cn("group flex", isUserMessage ? "justify-end" : "justify-start")}>
+                    <div
                       className={cn(
-                        "mb-1 font-semibold leading-tight",
-                        isUserMessage && "text-cyan-400",
-                        shouldBeGold && "text-amber-300"
+                        "w-full max-w-xs rounded-xl px-2.5 py-2 text-xs",
+                        isUserMessage ? "bg-primary/20 text-right" : "bg-muted/60",
+                        shouldBeGold && "bg-amber-500/30 ring-1 ring-amber-400/50"
                       )}
                     >
-                      {msg.author}
-                    </p>
-                    {msg.text && (
-                      <p
-                        className={cn(
-                          isUserMessage ? "text-cyan-50" : "text-foreground/90",
-                          shouldBeGold && "text-amber-100"
-                        )}
-                      >
-                        {msg.text}
-                      </p>
-                    )}
-                    {msg.media.length > 0 && (
-                      <div className="mt-1.5 space-y-1">
-                        {msg.media.map((media) => (
-                          <div key={media.id} className="rounded-lg bg-background/70 px-2 py-1">
-                            <p className="truncate">{media.name}</p>
+                      {isEditing ? (
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                runEditCommand(msg.id, "bold");
+                              }}
+                              className="rounded-md bg-background/70 px-2 py-1 text-[10px] font-semibold"
+                            >
+                              B
+                            </button>
+                            <button
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                runEditCommand(msg.id, "italic");
+                              }}
+                              className="rounded-md bg-background/70 px-2 py-1 text-[10px] font-semibold italic"
+                            >
+                              I
+                            </button>
+                            <button
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                runEditCommand(msg.id, "underline");
+                              }}
+                              className="rounded-md bg-background/70 px-2 py-1 text-[10px] font-semibold underline"
+                            >
+                              U
+                            </button>
+                            <button
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                runEditCommand(msg.id, "removeFormat");
+                              }}
+                              className="rounded-md bg-background/70 px-2 py-1 text-[10px]"
+                            >
+                              Clear
+                            </button>
+                          </div>
+
+                          <div className="relative rounded-lg bg-background/70 px-2 py-2 text-left">
+                            <div
+                              ref={(node) => {
+                                editRefs.current[msg.id] = node;
+                              }}
+                              contentEditable
+                              suppressContentEditableWarning
+                              onInput={(event) =>
+                                setEditingMessage((prev) =>
+                                  prev && prev.messageId === msg.id
+                                    ? {
+                                        ...prev,
+                                        html: sanitizeRichTextHtml(
+                                          event.currentTarget.innerHTML
+                                        ),
+                                      }
+                                    : prev
+                                )
+                              }
+                              onKeyDown={(event) => {
+                                if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                                  event.preventDefault();
+                                  if (editingMessage?.html) {
+                                    updateMessage(entry.team.id, entry.channel.id, msg.id, editingMessage.html);
+                                  }
+                                }
+                              }}
+                              className="min-h-20 whitespace-pre-wrap break-words outline-none"
+                            />
+                            {!editingMessage?.html && (
+                              <span className="pointer-events-none absolute left-2 top-2 text-muted-foreground/60">
+                                Edit your message...
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex justify-end gap-2">
+                            <button
+                              onClick={() => setEditingMessage(null)}
+                              className="rounded-lg bg-background/70 px-2 py-1 text-[10px]"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={() => updateMessage(entry.team.id, entry.channel.id, msg.id, editingMessage?.html ?? msg.html ?? msg.text)}
+                              className="rounded-lg bg-primary px-2 py-1 text-[10px] font-semibold text-primary-foreground"
+                            >
+                              Save
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="mb-1 flex items-center justify-between gap-2">
+                            <p
+                              className={cn(
+                                "font-semibold leading-tight",
+                                isUserMessage && "text-cyan-400",
+                                shouldBeGold && "text-amber-300"
+                              )}
+                            >
+                              {displayName}
+                            </p>
                             <p className="text-muted-foreground text-[10px]">
-                              {(media.size / 1024).toFixed(1)} KB
+                              {msg.updatedAt ? "edited" : format(new Date(msg.createdAt), "p")}
                             </p>
                           </div>
-                        ))}
-                      </div>
-                    )}
+
+                          {msg.html ? (
+                            <div
+                              className={cn(
+                                isUserMessage ? "text-cyan-50" : "text-foreground/90",
+                                shouldBeGold && "text-amber-100"
+                              )}
+                              dangerouslySetInnerHTML={{ __html: sanitizeRichTextHtml(msg.html) }}
+                            />
+                          ) : (
+                            <p
+                              className={cn(
+                                "whitespace-pre-wrap break-words",
+                                isUserMessage ? "text-cyan-50" : "text-foreground/90",
+                                shouldBeGold && "text-amber-100"
+                              )}
+                            >
+                              {msg.text}
+                            </p>
+                          )}
+
+                          {msg.media.length > 0 && (
+                            <div className="mt-2 space-y-2">
+                              {msg.media.map((media) => (
+                                <div key={media.id}>{renderMediaPreview(media)}</div>
+                              ))}
+                            </div>
+                          )}
+
+                          {isUserMessage && (
+                            <div className="mt-2 flex justify-end gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                              <button
+                                onClick={() =>
+                                  startEditMessage(
+                                    entry.team.id,
+                                    entry.channel.id,
+                                    msg.id,
+                                    sanitizeRichTextHtml(msg.html ?? escapeHtml(msg.text).replace(/\n/g, "<br />"))
+                                  )
+                                }
+                                className="rounded-md bg-background/70 px-2 py-1 text-[10px]"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => deleteMessage(entry.team.id, entry.channel.id, msg.id)}
+                                className="rounded-md bg-destructive/10 px-2 py-1 text-[10px] text-destructive"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </div>
                 );
               })}
             </div>
 
-            <div className="border-border space-y-2 border-t p-2.5">
-              <input
-                value={draft}
-                onChange={(e) => setDrafts((prev) => ({ ...prev, [entry.channel.id]: e.target.value }))}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    postMessage(entry.team.id, entry.channel.id, draft, []);
-                  }
-                }}
-                placeholder="Type message..."
-                className="w-full rounded-xl bg-background/70 px-3 py-2 text-xs outline-none"
-              />
+            {pendingDeleteMessage && pendingDeleteMessage.channelId === entry.channel.id && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="absolute inset-0 z-50 flex items-center justify-center rounded-2xl bg-foreground/10 backdrop-blur-sm"
+              >
+                <div className="glass-strong shadow-float rounded-2xl p-4 text-center">
+                  <p className="mb-3 text-sm font-medium">Delete this message?</p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={cancelDeleteMessage}
+                      className="glass hover:bg-muted/60 flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={confirmDeleteMessage}
+                      className="bg-destructive text-destructive-foreground flex-1 rounded-lg px-3 py-2 text-xs font-medium"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
 
-              <div className="flex items-center justify-between">
-                <label className="text-muted-foreground hover:text-foreground flex cursor-pointer items-center gap-1 text-xs">
-                  <Paperclip className="h-3.5 w-3.5" />
-                  Media
+            <div className="border-border space-y-3 border-t p-3">
+              {/* Notion-style floating formatting toolbar */}
+              <AnimatePresence>
+                {showFormattingToolbar === entry.channel.id && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 8 }}
+                    className="glass-strong shadow-float flex flex-wrap items-center gap-2 rounded-2xl p-2"
+                  >
+                    <button
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        runComposerCommand(entry.channel.id, "bold");
+                      }}
+                      className="rounded-lg bg-background/70 px-2 py-1.5 text-xs font-semibold hover:bg-muted transition-colors"
+                      title="Bold"
+                    >
+                      B
+                    </button>
+                    <button
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        runComposerCommand(entry.channel.id, "italic");
+                      }}
+                      className="rounded-lg bg-background/70 px-2 py-1.5 text-xs italic hover:bg-muted transition-colors"
+                      title="Italic"
+                    >
+                      I
+                    </button>
+                    <button
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        runComposerCommand(entry.channel.id, "underline");
+                      }}
+                      className="rounded-lg bg-background/70 px-2 py-1.5 text-xs underline hover:bg-muted transition-colors"
+                      title="Underline"
+                    >
+                      U
+                    </button>
+                    <button
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        runComposerCommand(entry.channel.id, "removeFormat");
+                      }}
+                      className="ml-auto rounded-lg bg-muted/50 px-2 py-1.5 text-xs hover:bg-muted transition-colors"
+                    >
+                      Clear
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Message composer */}
+              <div className="relative rounded-xl bg-background/70 px-3 py-3 text-sm outline-none">
+                <div
+                  ref={(node) => {
+                    composerRefs.current[entry.channel.id] = node;
+                  }}
+                  contentEditable
+                  suppressContentEditableWarning
+                  onInput={(event) => updateComposerHtml(entry.channel.id, event.currentTarget.innerHTML)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      void handlePostMessage(entry.team.id, entry.channel.id, drafts[entry.channel.id] ?? "", []);
+                    }
+                  }}
+                  className="min-h-12 max-h-24 overflow-y-auto whitespace-pre-wrap break-words outline-none"
+                />
+                {!drafts[entry.channel.id] && (
+                  <span className="pointer-events-none absolute left-3 top-3 text-muted-foreground/60 text-sm">
+                    Type a message...
+                  </span>
+                )}
+              </div>
+
+              {/* Action buttons */}
+              <div className="flex items-center justify-between gap-2">
+                {/* Format button */}
+                <button
+                  onClick={() => setShowFormattingToolbar(showFormattingToolbar === entry.channel.id ? null : entry.channel.id)}
+                  className="group relative h-10 w-10 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 hover:from-primary/30 hover:to-primary/20 transition-all flex items-center justify-center text-muted-foreground hover:text-primary"
+                  title="Text formatting"
+                >
+                  <Sliders className="h-4 w-4" />
+                </button>
+
+                {/* Media button */}
+                <label className="group relative h-10 w-10 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 hover:from-primary/30 hover:to-primary/20 transition-all flex items-center justify-center text-muted-foreground hover:text-primary cursor-pointer">
+                  <Paperclip className="h-4 w-4" />
                   <input
                     type="file"
                     multiple
                     className="hidden"
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const files = Array.from(e.target.files ?? []);
                       if (files.length === 0) return;
-                      postMessage(entry.team.id, entry.channel.id, draft, files);
+                      await handlePostMessage(entry.team.id, entry.channel.id, drafts[entry.channel.id] ?? "", files);
                       e.target.value = "";
                     }}
                   />
                 </label>
 
+                {/* Voice note button */}
                 <button
-                  onClick={() => postMessage(entry.team.id, entry.channel.id, draft, [])}
-                  className="bg-primary text-primary-foreground rounded-lg p-1.5"
+                  onClick={() => {
+                    if (isRecording === entry.channel.id) {
+                      setIsRecording(null);
+                      // TODO: Handle voice recording completion
+                    } else {
+                      setIsRecording(entry.channel.id);
+                    }
+                  }}
+                  className={cn(
+                    "relative h-10 w-10 rounded-full transition-all flex items-center justify-center",
+                    isRecording === entry.channel.id
+                      ? "bg-red-500/30 text-red-500 animate-pulse"
+                      : "bg-gradient-to-br from-primary/20 to-primary/10 hover:from-primary/30 hover:to-primary/20 text-muted-foreground hover:text-primary"
+                  )}
+                  title="Voice note"
                 >
-                  <Send className="h-3.5 w-3.5" />
+                  <Mic className="h-4 w-4" />
+                </button>
+
+                {/* Send button */}
+                <button
+                  onClick={() => void handlePostMessage(entry.team.id, entry.channel.id, drafts[entry.channel.id] ?? "", [])}
+                  className="ml-auto h-10 w-10 rounded-full bg-gradient-primary text-primary-foreground shadow-glow hover:shadow-glow/80 flex items-center justify-center transition-shadow disabled:opacity-50"
+                >
+                  <ArrowRight className="h-4 w-4" />
                 </button>
               </div>
             </div>

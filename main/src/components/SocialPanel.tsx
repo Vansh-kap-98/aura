@@ -47,6 +47,7 @@ type SocialPanelProps = {
   setTeams: Dispatch<SetStateAction<Team[]>>;
   onOpenTextChannel: (teamId: string, channelId: string) => void;
   userEmail: string;
+  userDisplayName: string;
 };
 
 const sanitizeChannel = (name: string) =>
@@ -68,12 +69,14 @@ export const SocialPanel = ({
   setTeams,
   onOpenTextChannel,
   userEmail,
+  userDisplayName,
 }: SocialPanelProps) => {
   const [copied, setCopied] = useState(false);
   const [showSyncModal, setShowSyncModal] = useState(false);
 
   const email = userEmail;
-  const initials = getInitials(email);
+  const displayName = userDisplayName || email;
+  const initials = getInitials(displayName);
   const color = getColorFromEmail(email);
 
   const onlinePeers = useMemo(() => {
@@ -83,7 +86,8 @@ export const SocialPanel = ({
 
     activeTeam.channels.forEach((channel) => {
       channel.messages.forEach((message) => {
-        if (message.author) emails.add(message.author);
+        const authorEmail = message.authorEmail ?? message.author;
+        if (authorEmail) emails.add(authorEmail);
       });
       const allowed = channel.settings.hidden?.allowedEmails ?? [];
       allowed.forEach((memberEmail) => {
@@ -226,12 +230,8 @@ export const SocialPanel = ({
               </span>
             </div>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold leading-tight">
-                {email}
-              </p>
-              <p className="text-muted-foreground truncate text-xs">
-                That's you · Active now
-              </p>
+              <p className="truncate text-sm font-semibold leading-tight">{displayName}</p>
+              <p className="text-muted-foreground truncate text-xs">{email} · Active now</p>
             </div>
             <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
               <button

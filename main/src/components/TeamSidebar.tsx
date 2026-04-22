@@ -1,4 +1,4 @@
-import { Dispatch, SetStateAction, useMemo, useRef, useState } from "react";
+import { Dispatch, SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus,
@@ -19,6 +19,11 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/context/AuthContext";
 import { SyncroLogo } from "@/components/SyncroLogo";
 import {
+  clearWorkspaceStorage,
+  readNickname,
+  writeNickname,
+} from "@/lib/workspace-storage";
+import {
   Channel,
   ChannelType,
   Team,
@@ -34,6 +39,8 @@ type TeamSidebarProps = {
   onOpenTextChannel: (teamId: string, channelId: string) => void;
   onAddEvent: (event: WorkspaceEvent) => void;
   userEmail: string;
+  userDisplayName: string;
+  onUserDisplayNameChange: (displayName: string) => void;
 };
 
 const GRADIENT_OPTIONS = [
@@ -90,6 +97,8 @@ export const TeamSidebar = ({
   onOpenTextChannel,
   onAddEvent,
   userEmail,
+  userDisplayName,
+  onUserDisplayNameChange,
 }: TeamSidebarProps) => {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
@@ -113,6 +122,8 @@ export const TeamSidebar = ({
   const [meetingDate, setMeetingDate] = useState("");
   const [meetingTime, setMeetingTime] = useState("");
   const [meetingDuration, setMeetingDuration] = useState(30);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileDraft, setProfileDraft] = useState("");
 
   const activeTeam = teams.find((t) => t.id === activeTeamId) ?? null;
   const isLeader = !!activeTeam && activeTeam.leaderEmail === userEmail;
@@ -266,6 +277,35 @@ export const TeamSidebar = ({
     return { team, channel };
   }, [settingsTarget, teams]);
 
+  useEffect(() => {
+    setProfileDraft(readNickname(userEmail) || userDisplayName || userEmail);
+  }, [userEmail, userDisplayName, profileOpen]);
+
+  const displayName = userDisplayName || userEmail;
+  const initials = getInitials(displayName || userEmail);
+
+  const handleSaveProfile = () => {
+    const nextName = profileDraft.trim();
+    writeNickname(userEmail, nextName);
+    onUserDisplayNameChange(nextName || userEmail);
+    setProfileOpen(false);
+    toast.success("Profile updated.");
+  };
+
+  const handleDeleteAccount = async () => {
+    const confirmed = window.confirm(
+      "Delete your local account data and sign out? This clears saved workspace data from this browser."
+    );
+    if (!confirmed) return;
+
+    clearWorkspaceStorage(userEmail);
+    onUserDisplayNameChange(userEmail);
+    setProfileOpen(false);
+    await signOut();
+    navigate("/login", { replace: true });
+    toast.success("Account data cleared.");
+  };
+
   const saveScheduledMeeting = () => {
     if (!selectedChannel || selectedChannel.channel.type !== "meeting") return;
     if (!meetingTitle.trim() || !meetingDate || !meetingTime) return;
@@ -308,7 +348,6 @@ export const TeamSidebar = ({
   };
 
   const email = user?.email ?? "";
-  const initials = getInitials(email || userEmail);
 
   return (
     <>
@@ -624,16 +663,23 @@ export const TeamSidebar = ({
             animate={{ opacity: 1, y: 0 }}
             className="glass shadow-soft flex items-center gap-3 rounded-2xl px-3 py-2.5"
           >
-            <div className="bg-gradient-primary shadow-glow grid h-8 w-8 shrink-0 place-items-center rounded-xl text-[11px] font-bold text-white">
-              {initials}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-medium leading-tight">{email}</p>
-              <div className="mt-0.5 flex items-center gap-1">
-                <span className="bg-success h-1.5 w-1.5 rounded-full" />
-                <p className="text-muted-foreground text-[10px]">Active</p>
+            <button
+              type="button"
+              onClick={() => setProfileOpen(true)}
+              className="flex min-w-0 flex-1 items-center gap-3 text-left"
+            >
+              <div className="bg-gradient-primary shadow-glow grid h-8 w-8 shrink-0 place-items-center rounded-xl text-[11px] font-bold text-white">
+                {initials}
               </div>
-            </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-medium leading-tight">{displayName}</p>
+                <div className="mt-0.5 flex items-center gap-1">
+                  <span className="bg-success h-1.5 w-1.5 rounded-full" />
+                  <p className="text-muted-foreground text-[10px]">{email || userEmail}</p>
+                </div>
+              </div>
+            </button>
+
             <motion.button
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.9 }}
@@ -656,6 +702,77 @@ export const TeamSidebar = ({
           Create New Space
         </motion.button>
       </aside>
+
+      <AnimatePresence>
+        {profileOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/10 p-4 backdrop-blur-sm"
+            onClick={() => setProfileOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 10 }}
+              onClick={(e) => e.stopPropagation()}
+              className="glass-strong shadow-float w-full max-w-md rounded-3xl p-5"
+            >
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold">Your profile</h3>
+                  <p className="text-muted-foreground text-xs">Nickname and account actions</p>
+                </div>
+                <button
+                  onClick={() => setProfileOpen(false)}
+                  className="text-muted-foreground hover:text-foreground rounded-lg p-1"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                <div className="glass rounded-2xl px-3 py-2">
+                  <p className="mb-1 text-[11px] font-semibold uppercase text-muted-foreground">Nickname</p>
+                  <input
+                    value={profileDraft}
+                    onChange={(e) => setProfileDraft(e.target.value)}
+                    placeholder={userEmail}
+                    className="w-full bg-transparent text-sm outline-none"
+                  />
+                </div>
+
+                <div className="rounded-2xl border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
+                  Signed in as {email || userEmail}.
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setProfileOpen(false)}
+                    className="glass hover:bg-muted/60 flex-1 rounded-2xl py-3 text-sm font-medium transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveProfile}
+                    className="bg-gradient-primary text-primary-foreground shadow-glow flex-1 rounded-2xl py-3 text-sm font-semibold"
+                  >
+                    Save
+                  </button>
+                </div>
+
+                <button
+                  onClick={handleDeleteAccount}
+                  className="w-full rounded-2xl border border-destructive/30 bg-destructive/5 py-3 text-sm font-semibold text-destructive transition-colors hover:bg-destructive/10"
+                >
+                  Delete account
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {selectedChannel && (

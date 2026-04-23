@@ -58,6 +58,9 @@ const sanitizeChannel = (name: string) =>
     .replace(/[^a-z0-9-]/g, "")
     .replace(/^#/, "");
 
+  const DEMO_MEMBER_EMAIL = "teammate.demo@syncro.app";
+  const DEMO_AUTO_REPLY = "hi";
+
 const isPrivateDmFor = (channel: Channel, userA: string, userB: string) => {
   const allowed = channel.settings.hidden?.allowedEmails ?? [];
   if (allowed.length !== 2) return false;
@@ -94,6 +97,10 @@ export const SocialPanel = ({
         if (memberEmail) emails.add(memberEmail);
       });
     });
+
+    if (userEmail === "demo@syncro.app") {
+      emails.add(DEMO_MEMBER_EMAIL);
+    }
 
     emails.delete(userEmail);
 
@@ -132,7 +139,20 @@ export const SocialPanel = ({
             allowedEmails: [userEmail, targetEmail],
           },
         },
-        messages: [],
+        messages:
+          targetEmail === DEMO_MEMBER_EMAIL
+            ? [
+                {
+                  id: crypto.randomUUID(),
+                  author: DEMO_MEMBER_EMAIL,
+                  authorEmail: DEMO_MEMBER_EMAIL,
+                  authorName: DEMO_MEMBER_EMAIL,
+                  text: DEMO_AUTO_REPLY,
+                  createdAt: new Date().toISOString(),
+                  media: [],
+                },
+              ]
+            : [],
       };
 
       setTeams((prev) =>
@@ -140,6 +160,40 @@ export const SocialPanel = ({
           team.id === activeTeam.id
             ? { ...team, channels: [...team.channels, dmChannel] }
             : team
+        )
+      );
+    } else if (targetEmail === DEMO_MEMBER_EMAIL) {
+      setTeams((prev) =>
+        prev.map((team) =>
+          team.id !== activeTeam.id
+            ? team
+            : {
+                ...team,
+                channels: team.channels.map((channel) => {
+                  if (channel.id !== existing.id) return channel;
+                  const alreadyHasReply = channel.messages.some(
+                    (message) =>
+                      message.authorEmail === DEMO_MEMBER_EMAIL &&
+                      message.text.toLowerCase() === DEMO_AUTO_REPLY
+                  );
+                  if (alreadyHasReply) return channel;
+                  return {
+                    ...channel,
+                    messages: [
+                      ...channel.messages,
+                      {
+                        id: crypto.randomUUID(),
+                        author: DEMO_MEMBER_EMAIL,
+                        authorEmail: DEMO_MEMBER_EMAIL,
+                        authorName: DEMO_MEMBER_EMAIL,
+                        text: DEMO_AUTO_REPLY,
+                        createdAt: new Date().toISOString(),
+                        media: [],
+                      },
+                    ],
+                  };
+                }),
+              }
         )
       );
     }

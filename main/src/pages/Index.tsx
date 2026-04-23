@@ -15,6 +15,7 @@ import {
 const TEAMS_KEY = "mesh_teams";
 const ACTIVE_KEY = "mesh_active_team";
 const EVENTS_KEY = "mesh_calendar_events";
+const CALENDAR_SPACES_KEY = "mesh_calendar_selected_spaces";
 
 const createDefaultChannel = (name: string): Channel => ({
   id: crypto.randomUUID(),
@@ -129,7 +130,16 @@ const Index = () => {
       return parsed.map((e) => ({
         ...e,
         scope: e.scope ?? "personal",
+        assigneeEmail: e.assigneeEmail ?? userEmail,
       }));
+    } catch {
+      return [];
+    }
+  });
+  const [selectedCalendarTeamIds, setSelectedCalendarTeamIds] = useState<string[]>(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(CALENDAR_SPACES_KEY) || "[]") as string[];
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
@@ -157,6 +167,10 @@ const Index = () => {
   useEffect(() => {
     localStorage.setItem(EVENTS_KEY, JSON.stringify(events));
   }, [events]);
+
+  useEffect(() => {
+    localStorage.setItem(CALENDAR_SPACES_KEY, JSON.stringify(selectedCalendarTeamIds));
+  }, [selectedCalendarTeamIds]);
 
   const activeTeam = useMemo(
     () => teams.find((team) => team.id === activeTeamId) ?? null,
@@ -198,6 +212,8 @@ const Index = () => {
           setEvents={setEvents}
           teams={teams}
           activeTeam={activeTeam}
+          selectedCalendarTeamIds={selectedCalendarTeamIds}
+          setSelectedCalendarTeamIds={setSelectedCalendarTeamIds}
           openTextChannels={openTextChannels}
           closeTextChannel={closeChannelChat}
           setTeams={setTeams}

@@ -1,4 +1,4 @@
-export type ChannelType = "text" | "meeting" | "hidden";
+export type ChannelType = "text" | "meeting" | "hidden" | "dm";
 
 export type EventScope = "personal" | "space";
 
@@ -67,6 +67,8 @@ export type Channel = {
   type: ChannelType;
   settings: ChannelSettings;
   messages: ChatMessage[];
+  dmMemberEmail?: string;
+  dmMemberName?: string;
 };
 
 export type Team = {
@@ -84,5 +86,6 @@ export type WorkspaceEvent = {
   type: WorkspaceEventType;
   scope: EventScope;
   teamId?: string;
+  assigneeEmail?: string;
   sourceChannelId?: string;
 };

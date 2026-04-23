@@ -6,11 +6,11 @@ import {
   Search,
   LogOut,
   X,
-  Check,
   Video,
   Lock,
   MoreHorizontal,
   Megaphone,
+  MessageCircle,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { format, parseISO, isAfter, startOfDay } from "date-fns";
@@ -122,6 +122,7 @@ export const TeamSidebar = ({
   const [meetingDate, setMeetingDate] = useState("");
   const [meetingTime, setMeetingTime] = useState("");
   const [meetingDuration, setMeetingDuration] = useState(30);
+  const [meetingAssigneeEmail, setMeetingAssigneeEmail] = useState(userEmail);
   const [profileOpen, setProfileOpen] = useState(false);
   const [profileDraft, setProfileDraft] = useState("");
 
@@ -131,10 +132,29 @@ export const TeamSidebar = ({
   const visibleChannels = useMemo(() => {
     if (!activeTeam) return [];
     return activeTeam.channels.filter((channel) => {
+      // Exclude DM channels from regular channel list
+      if (channel.type === "dm") return false;
       if (channel.type !== "hidden") return true;
       const allowed = channel.settings.hidden?.allowedEmails ?? [];
       return allowed.includes(userEmail) || activeTeam.leaderEmail === userEmail;
     });
+  }, [activeTeam, userEmail]);
+
+  const dmChannels = useMemo(() => {
+    if (!activeTeam) return [];
+    return activeTeam.channels.filter((channel) => channel.type === "dm");
+  }, [activeTeam]);
+
+  const activeTeamMembers = useMemo(() => {
+    if (!activeTeam) return [userEmail];
+    const members = new Set<string>([activeTeam.leaderEmail, userEmail]);
+    activeTeam.channels.forEach((channel) => {
+      channel.messages.forEach((message) => {
+        if (message.authorEmail) members.add(message.authorEmail);
+      });
+      (channel.settings.hidden?.allowedEmails ?? []).forEach((email) => members.add(email));
+    });
+    return Array.from(members).sort((a, b) => a.localeCompare(b));
   }, [activeTeam, userEmail]);
 
   const upcomingTeamDeadlines = useMemo(() => {
@@ -337,6 +357,7 @@ export const TeamSidebar = ({
       type: "meetingReminder",
       scope: "space",
       teamId: selectedChannel.team.id,
+      assigneeEmail: meetingAssigneeEmail,
       sourceChannelId: selectedChannel.channel.id,
     });
 
@@ -344,6 +365,7 @@ export const TeamSidebar = ({
     setMeetingDate("");
     setMeetingTime("");
     setMeetingDuration(30);
+    setMeetingAssigneeEmail(userEmail);
     toast.success("Meeting scheduled and calendar reminder added.");
   };
 
@@ -524,16 +546,48 @@ export const TeamSidebar = ({
                     );
                   })}
 
+                  {dmChannels.length > 0 && (
+                    <div className="mt-4 space-y-2">
+                      <div className="px-3 py-1">
+                        <span className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">
+                          Direct Messages
+                        </span>
+                      </div>
+                      <div className="space-y-0.5">
+                        {dmChannels.map((dm) => (
+                          <button
+                            key={dm.id}
+                            onClick={() => onOpenTextChannel(activeTeam.id, dm.id)}
+                            className="hover:bg-muted/60 flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm transition-colors"
+                          >
+                            <span className="flex items-center gap-2">
+                              <MessageCircle className="text-muted-foreground h-3.5 w-3.5" />
+                              <span className="text-foreground/80 hover:text-foreground">
+                                {dm.dmMemberName || dm.dmMemberEmail || dm.name}
+                              </span>
+                            </span>
+                            {dm.unread > 0 && (
+                              <span className="bg-primary text-primary-foreground min-w-[1.25rem] rounded-full px-1.5 py-0.5 text-center text-[10px] font-semibold">
+                                {dm.unread}
+                              </span>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   <AnimatePresence>
                     {addingChannel ? (
                       <motion.div
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: "auto" }}
                         exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.2 }}
                         className="overflow-hidden"
                       >
-                        <div className="space-y-2 rounded-xl px-3 py-2">
-                          <div className="flex items-center gap-2">
+                        <div className="glass-strong shadow-soft space-y-3 rounded-2xl p-3">
+                          <div className="flex items-center gap-2 rounded-xl bg-background/60 px-3 py-2">
                             <Hash className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
                             <input
                               ref={channelInputRef}
@@ -548,19 +602,30 @@ export const TeamSidebar = ({
                                 }
                               }}
                               placeholder="channel-name"
-                              className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/50"
+                              className="flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground/60"
                             />
                           </div>
 
-                          <select
-                            value={newChannelType}
-                            onChange={(e) => setNewChannelType(e.target.value as ChannelType)}
-                            className="glass w-full rounded-lg px-2 py-1.5 text-xs outline-none"
-                          >
-                            <option value="text">Text channel</option>
-                            <option value="meeting">Team meeting channel</option>
-                            <option value="hidden">Hidden channel</option>
-                          </select>
+                          <div className="flex gap-2">
+                            {[
+                              { value: "text" as ChannelType, label: "Text" },
+                              { value: "meeting" as ChannelType, label: "Meeting" },
+                              { value: "hidden" as ChannelType, label: "Hidden" },
+                            ].map((option) => (
+                              <button
+                                key={option.value}
+                                onClick={() => setNewChannelType(option.value)}
+                                className={cn(
+                                  "flex-1 rounded-lg px-3 py-2 text-xs font-medium transition-all",
+                                  newChannelType === option.value
+                                    ? "bg-gradient-primary text-primary-foreground shadow-glow"
+                                    : "bg-background/60 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                                )}
+                              >
+                                {option.label}
+                              </button>
+                            ))}
+                          </div>
 
                           <div className="flex items-center justify-end gap-2">
                             <button
@@ -568,15 +633,15 @@ export const TeamSidebar = ({
                                 setAddingChannel(false);
                                 setNewChannel("");
                               }}
-                              className="text-muted-foreground hover:text-foreground"
+                              className="rounded-lg px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                             >
-                              <X className="h-3.5 w-3.5" />
+                              Cancel
                             </button>
                             <button
                               onClick={addChannel}
-                              className="bg-primary text-primary-foreground grid h-5 w-5 place-items-center rounded-md"
+                              className="bg-gradient-primary text-primary-foreground rounded-lg px-3 py-1.5 text-xs font-semibold shadow-glow"
                             >
-                              <Check className="h-3 w-3" strokeWidth={2.5} />
+                              Create
                             </button>
                           </div>
                         </div>
@@ -587,7 +652,7 @@ export const TeamSidebar = ({
                         className="text-muted-foreground hover:text-foreground hover:bg-muted/60 flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs transition-all"
                       >
                         <Plus className="h-3 w-3" />
-                        Add channel type
+                        Add channel
                       </button>
                     )}
                   </AnimatePresence>
@@ -970,6 +1035,17 @@ export const TeamSidebar = ({
                         placeholder="Duration mins"
                         className="w-full rounded-xl bg-background/50 px-3 py-2 text-sm outline-none"
                       />
+                      <select
+                        value={meetingAssigneeEmail}
+                        onChange={(e) => setMeetingAssigneeEmail(e.target.value)}
+                        className="w-full rounded-xl bg-background/50 px-3 py-2 text-sm outline-none"
+                      >
+                        {activeTeamMembers.map((member) => (
+                          <option key={member} value={member}>
+                            Assign to: {member}
+                          </option>
+                        ))}
+                      </select>
                       <button
                         onClick={saveScheduledMeeting}
                         className="bg-gradient-primary text-primary-foreground w-full rounded-xl py-2 text-sm font-semibold"

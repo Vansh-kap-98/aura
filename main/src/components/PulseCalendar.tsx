@@ -9,11 +9,11 @@ import {
   Check,
   Calendar as CalIcon,
   Paperclip,
-  Send,
   MessageCircle,
   Mic,
   ArrowRight,
   Sliders,
+  Users,
 } from "lucide-react";
 import {
   format,
@@ -35,6 +35,8 @@ type PulseCalendarProps = {
   setEvents: Dispatch<SetStateAction<WorkspaceEvent[]>>;
   teams: Team[];
   activeTeam: Team | null;
+  selectedCalendarTeamIds: string[];
+  setSelectedCalendarTeamIds: Dispatch<SetStateAction<string[]>>;
   openTextChannels: Array<{ teamId: string; channelId: string }>;
   closeTextChannel: (teamId: string, channelId: string) => void;
   setTeams: Dispatch<SetStateAction<Team[]>>;
@@ -123,6 +125,8 @@ export const PulseCalendar = ({
   setEvents,
   teams,
   activeTeam,
+  selectedCalendarTeamIds,
+  setSelectedCalendarTeamIds,
   openTextChannels,
   closeTextChannel,
   setTeams,
@@ -134,13 +138,15 @@ export const PulseCalendar = ({
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [quickTitle, setQuickTitle] = useState("");
   const [quickType, setQuickType] = useState<WorkspaceEventType>("meeting");
-  const [quickScope, setQuickScope] = useState<"personal" | "space">("personal");
+  const [quickTeamId, setQuickTeamId] = useState<string>("personal");
 
   const [showModal, setShowModal] = useState(false);
   const [modalDate, setModalDate] = useState(todayKey);
   const [modalTitle, setModalTitle] = useState("");
   const [modalType, setModalType] = useState<WorkspaceEventType>("meeting");
-  const [modalScope, setModalScope] = useState<"personal" | "space">("personal");
+  const [modalTeamId, setModalTeamId] = useState<string>("personal");
+  const [memberFilter, setMemberFilter] = useState<string>("all");
+  const [deadlinePreviewDate, setDeadlinePreviewDate] = useState<string | null>(null);
 
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editingMessage, setEditingMessage] = useState<EditingMessageState | null>(null);
@@ -168,15 +174,45 @@ export const PulseCalendar = ({
   } | null>(null);
 
   const grid = buildGrid(currentMonth);
-  const eventsFor = (dateKey: string) => events.filter((e) => e.date === dateKey);
+  const selectedTeamsSet = useMemo(() => new Set(selectedCalendarTeamIds), [selectedCalendarTeamIds]);
+
+  const teamMembers = useMemo(() => {
+    const emails = new Set<string>([userEmail]);
+
+    teams
+      .filter((team) => selectedTeamsSet.has(team.id))
+      .forEach((team) => {
+        emails.add(team.leaderEmail);
+        team.channels.forEach((channel) => {
+          channel.messages.forEach((message) => {
+            if (message.authorEmail) emails.add(message.authorEmail);
+          });
+          (channel.settings.hidden?.allowedEmails ?? []).forEach((email) => emails.add(email));
+        });
+      });
+
+    return Array.from(emails).sort((a, b) => a.localeCompare(b));
+  }, [teams, selectedTeamsSet, userEmail]);
+
+  const visibleEvents = useMemo(() => {
+    return events.filter((event) => {
+      const isPersonal = !event.teamId || event.scope === "personal";
+      const isSelectedSpaceEvent = !!event.teamId && selectedTeamsSet.has(event.teamId);
+      if (!isPersonal && !isSelectedSpaceEvent) return false;
+
+      if (memberFilter === "all") return true;
+      return (event.assigneeEmail ?? userEmail) === memberFilter;
+    });
+  }, [events, memberFilter, selectedTeamsSet, userEmail]);
+
+  const eventsFor = (dateKey: string) => visibleEvents.filter((e) => e.date === dateKey);
 
   const createEvent = (
     date: string,
     title: string,
     type: WorkspaceEventType,
-    scope: "personal" | "space"
+    teamId?: string
   ) => {
-    const useSpaceScope = scope === "space" && !!activeTeam;
     setEvents((prev) => [
       ...prev,
       {
@@ -184,21 +220,32 @@ export const PulseCalendar = ({
         date,
         title,
         type,
-        scope: useSpaceScope ? "space" : "personal",
-        teamId: useSpaceScope ? activeTeam?.id : undefined,
+        scope: teamId ? "space" : "personal",
+        teamId,
+        assigneeEmail: userEmail,
       },
     ]);
   };
 
   const addQuickEvent = () => {
     if (!quickTitle.trim() || !selectedDate) return;
-    createEvent(selectedDate, quickTitle.trim(), quickType, quickScope);
+    createEvent(
+      selectedDate,
+      quickTitle.trim(),
+      quickType,
+      quickTeamId === "personal" ? undefined : quickTeamId
+    );
     setQuickTitle("");
   };
 
   const addModalEvent = () => {
     if (!modalTitle.trim() || !modalDate) return;
-    createEvent(modalDate, modalTitle.trim(), modalType, modalScope);
+    createEvent(
+      modalDate,
+      modalTitle.trim(),
+      modalType,
+      modalTeamId === "personal" ? undefined : modalTeamId
+    );
     setModalTitle("");
     setModalDate(todayKey());
     setShowModal(false);
@@ -210,6 +257,7 @@ export const PulseCalendar = ({
     setModalDate(selectedDate ?? todayKey());
     setModalTitle("");
     setModalType("meeting");
+    setModalTeamId(activeTeam?.id ?? "personal");
     setShowModal(true);
   };
 
@@ -608,6 +656,45 @@ export const PulseCalendar = ({
         </div>
       </header>
 
+      <div className="glass shadow-soft flex flex-wrap items-center gap-2 rounded-2xl px-3 py-2 text-xs">
+        <span className="text-muted-foreground font-semibold uppercase tracking-wider">Spaces</span>
+        {teams.map((team) => {
+          const selected = selectedTeamsSet.has(team.id);
+          return (
+            <button
+              key={team.id}
+              onClick={() =>
+                setSelectedCalendarTeamIds((prev) =>
+                  prev.includes(team.id) ? prev.filter((id) => id !== team.id) : [...prev, team.id]
+                )
+              }
+              className={cn(
+                "rounded-full px-2.5 py-1 font-medium transition-colors",
+                selected ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/70"
+              )}
+            >
+              {team.name}
+            </button>
+          );
+        })}
+
+        <span className="text-muted-foreground ml-auto flex items-center gap-1 font-semibold uppercase tracking-wider">
+          <Users className="h-3.5 w-3.5" /> Member
+        </span>
+        <select
+          value={memberFilter}
+          onChange={(e) => setMemberFilter(e.target.value)}
+          className="rounded-xl bg-muted px-2 py-1 text-xs outline-none"
+        >
+          <option value="all">All members</option>
+          {teamMembers.map((member) => (
+            <option key={member} value={member}>
+              {member}
+            </option>
+          ))}
+        </select>
+      </div>
+
       <div className="glass shadow-soft flex flex-1 flex-col overflow-hidden rounded-3xl p-4">
         <div className="grid grid-cols-7 gap-1 pb-2">
           {WEEKDAYS.map((d) => (
@@ -639,6 +726,7 @@ export const PulseCalendar = ({
                   setSelectedDate(isSelected ? null : dateKey);
                   setQuickTitle("");
                 }}
+                onDoubleClick={() => setDeadlinePreviewDate(dateKey)}
                 className={cn(
                   "group relative flex cursor-pointer flex-col gap-0.5 rounded-2xl p-2 transition-all",
                   !inMonth && "opacity-25",
@@ -736,12 +824,16 @@ export const PulseCalendar = ({
             />
 
             <select
-              value={quickScope}
-              onChange={(e) => setQuickScope(e.target.value as "personal" | "space")}
+              value={quickTeamId}
+              onChange={(e) => setQuickTeamId(e.target.value)}
               className="rounded-xl bg-muted px-2 py-1 text-xs"
             >
               <option value="personal">Personal</option>
-              <option value="space" disabled={!activeTeam}>Space</option>
+              {teams.map((team) => (
+                <option key={team.id} value={team.id}>
+                  {team.name}
+                </option>
+              ))}
             </select>
 
             <button
@@ -771,6 +863,54 @@ export const PulseCalendar = ({
       </div>
 
       <AnimatePresence>
+        {deadlinePreviewDate && (
+          <motion.div
+            key="deadline-preview"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/10 p-4 backdrop-blur-sm"
+            onClick={() => setDeadlinePreviewDate(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 8, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.98 }}
+              onClick={(e) => e.stopPropagation()}
+              className="glass-strong shadow-float w-full max-w-sm rounded-3xl p-4"
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-sm font-semibold">
+                  Deadlines · {format(parseISO(deadlinePreviewDate), "MMM d")}
+                </h3>
+                <button
+                  onClick={() => setDeadlinePreviewDate(null)}
+                  className="text-muted-foreground hover:text-foreground rounded-lg p-1"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="space-y-2">
+                {eventsFor(deadlinePreviewDate)
+                  .filter((event) => event.type === "deadline")
+                  .map((event) => (
+                    <div key={event.id} className="rounded-xl bg-muted/60 px-3 py-2 text-sm">
+                      <p className="font-medium">{event.title}</p>
+                      <p className="text-muted-foreground mt-0.5 text-xs">
+                        {(event.teamId && teams.find((team) => team.id === event.teamId)?.name) || "Personal"}
+                      </p>
+                    </div>
+                  ))}
+                {eventsFor(deadlinePreviewDate).filter((event) => event.type === "deadline").length === 0 && (
+                  <div className="rounded-xl border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
+                    No deadlines on this date.
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
         {showModal && (
           <motion.div
             key="modal-overlay"
@@ -824,28 +964,19 @@ export const PulseCalendar = ({
                 </div>
 
                 <div className="glass rounded-2xl p-2">
-                  <p className="px-2 pb-1 text-[11px] font-semibold uppercase text-muted-foreground">Scope</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={() => setModalScope("personal")}
-                      className={cn(
-                        "rounded-xl px-3 py-2 text-xs",
-                        modalScope === "personal" ? "bg-primary text-primary-foreground" : "bg-muted"
-                      )}
-                    >
-                      Personal
-                    </button>
-                    <button
-                      onClick={() => setModalScope("space")}
-                      disabled={!activeTeam}
-                      className={cn(
-                        "rounded-xl px-3 py-2 text-xs disabled:opacity-40",
-                        modalScope === "space" ? "bg-primary text-primary-foreground" : "bg-muted"
-                      )}
-                    >
-                      Space
-                    </button>
-                  </div>
+                  <p className="px-2 pb-1 text-[11px] font-semibold uppercase text-muted-foreground">Space</p>
+                  <select
+                    value={modalTeamId}
+                    onChange={(e) => setModalTeamId(e.target.value)}
+                    className="w-full rounded-xl bg-muted px-3 py-2 text-xs outline-none"
+                  >
+                    <option value="personal">Personal</option>
+                    {teams.map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {team.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <div className="grid grid-cols-3 gap-2">
@@ -889,7 +1020,6 @@ export const PulseCalendar = ({
       {openChats.map((entry, idx) => {
         const key = `${entry.team.id}-${entry.channel.id}`;
         const draft = drafts[entry.channel.id] ?? "";
-        const draftIsEmpty = htmlToPlainText(draft).length === 0;
         const layout = windowLayouts[key] ?? {
           left: Math.max(16, window.innerWidth - 368 - idx * 24),
           top: Math.max(16, window.innerHeight - 320 - idx * 24),

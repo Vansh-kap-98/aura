@@ -12,8 +12,8 @@ import {
   MessageCircle,
   Mic,
   ArrowRight,
-  Sliders,
   Users,
+  Clock,
 } from "lucide-react";
 import {
   format,
@@ -28,7 +28,8 @@ import {
 } from "date-fns";
 import { cn } from "@/lib/utils";
 import { filesToMedia, htmlToPlainText, sanitizeRichTextHtml } from "@/lib/message-utils";
-import { Team, WorkspaceEvent, WorkspaceEventType } from "@/types/collab";
+import { ChatMessage, DirectMessageThread, Team, WorkspaceEvent, WorkspaceEventType } from "@/types/collab";
+import { ChatInputEditor } from "@/components/ChatInputEditor";
 
 type PulseCalendarProps = {
   events: WorkspaceEvent[];
@@ -40,6 +41,8 @@ type PulseCalendarProps = {
   openTextChannels: Array<{ teamId: string; channelId: string }>;
   closeTextChannel: (teamId: string, channelId: string) => void;
   setTeams: Dispatch<SetStateAction<Team[]>>;
+  directThreads: DirectMessageThread[];
+  setDirectThreads: Dispatch<SetStateAction<DirectMessageThread[]>>;
   userEmail: string;
   userDisplayName: string;
 };
@@ -63,6 +66,28 @@ type PendingDeleteState = {
   channelId: string;
   messageId: string;
 };
+
+type ChatWindowEntry =
+  | {
+      key: string;
+      teamId: string;
+      channelId: string;
+      label: string;
+      subtitle: string;
+      messages: ChatMessage[];
+      isDirectMessage: false;
+      isGeneral: boolean;
+    }
+  | {
+      key: string;
+      teamId: "__dm__";
+      channelId: string;
+      label: string;
+      subtitle: string;
+      messages: ChatMessage[];
+      isDirectMessage: true;
+      isGeneral: false;
+    };
 
 const escapeHtml = (value: string) =>
   value
@@ -130,6 +155,8 @@ export const PulseCalendar = ({
   openTextChannels,
   closeTextChannel,
   setTeams,
+  directThreads,
+  setDirectThreads,
   userEmail,
   userDisplayName,
 }: PulseCalendarProps) => {
@@ -139,9 +166,13 @@ export const PulseCalendar = ({
   const [quickTitle, setQuickTitle] = useState("");
   const [quickType, setQuickType] = useState<WorkspaceEventType>("meeting");
   const [quickTeamId, setQuickTeamId] = useState<string>("personal");
+  const [quickTimeFrom, setQuickTimeFrom] = useState("09:00");
+  const [quickTimeTo, setQuickTimeTo] = useState("10:00");
 
   const [showModal, setShowModal] = useState(false);
   const [modalDate, setModalDate] = useState(todayKey);
+  const [modalTimeFrom, setModalTimeFrom] = useState("09:00");
+  const [modalTimeTo, setModalTimeTo] = useState("10:00");
   const [modalTitle, setModalTitle] = useState("");
   const [modalType, setModalType] = useState<WorkspaceEventType>("meeting");
   const [modalTeamId, setModalTeamId] = useState<string>("personal");
@@ -151,7 +182,6 @@ export const PulseCalendar = ({
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editingMessage, setEditingMessage] = useState<EditingMessageState | null>(null);
   const [pendingDeleteMessage, setPendingDeleteMessage] = useState<PendingDeleteState | null>(null);
-  const [showFormattingToolbar, setShowFormattingToolbar] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState<string | null>(null);
   const [windowLayouts, setWindowLayouts] = useState<Record<string, ChatWindowLayout>>({});
   const dragRef = useRef<{
@@ -160,8 +190,8 @@ export const PulseCalendar = ({
     offsetY: number;
   } | null>(null);
 
-  const composerRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const editRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const submitEditorRefs = useRef<Record<string, () => void>>({});
   const resizeRef = useRef<{
     key: string;
     startX: number;
@@ -211,6 +241,8 @@ export const PulseCalendar = ({
     date: string,
     title: string,
     type: WorkspaceEventType,
+    timeFrom: string,
+    timeTo: string,
     teamId?: string
   ) => {
     setEvents((prev) => [
@@ -218,6 +250,9 @@ export const PulseCalendar = ({
       {
         id: crypto.randomUUID(),
         date,
+        time: `${timeFrom}-${timeTo}`,
+        timeFrom,
+        timeTo,
         title,
         type,
         scope: teamId ? "space" : "personal",
@@ -233,6 +268,8 @@ export const PulseCalendar = ({
       selectedDate,
       quickTitle.trim(),
       quickType,
+      quickTimeFrom,
+      quickTimeTo,
       quickTeamId === "personal" ? undefined : quickTeamId
     );
     setQuickTitle("");
@@ -244,10 +281,14 @@ export const PulseCalendar = ({
       modalDate,
       modalTitle.trim(),
       modalType,
+      modalTimeFrom,
+      modalTimeTo,
       modalTeamId === "personal" ? undefined : modalTeamId
     );
     setModalTitle("");
     setModalDate(todayKey());
+    setModalTimeFrom("09:00");
+    setModalTimeTo("10:00");
     setShowModal(false);
   };
 
@@ -255,6 +296,8 @@ export const PulseCalendar = ({
 
   const openModal = () => {
     setModalDate(selectedDate ?? todayKey());
+    setModalTimeFrom("09:00");
+    setModalTimeTo("10:00");
     setModalTitle("");
     setModalType("meeting");
     setModalTeamId(activeTeam?.id ?? "personal");
@@ -264,27 +307,40 @@ export const PulseCalendar = ({
   const openChats = useMemo(() => {
     return openTextChannels
       .map(({ teamId, channelId }) => {
+        if (teamId === "__dm__") {
+          const thread = directThreads.find((item) => item.memberEmail === channelId);
+          if (!thread) return null;
+          return {
+            key: `dm-${thread.memberEmail}`,
+            teamId: "__dm__" as const,
+            channelId: thread.memberEmail,
+            label: thread.memberName || thread.memberEmail,
+            subtitle: "Direct message",
+            messages: thread.messages,
+            isDirectMessage: true as const,
+            isGeneral: false,
+          } satisfies ChatWindowEntry;
+        }
+
         const team = teams.find((t) => t.id === teamId);
         if (!team) return null;
         const channel = team.channels.find(
           (c) => c.id === channelId && (c.type === "text" || c.type === "hidden")
         );
         if (!channel) return null;
-        return { team, channel };
+        return {
+          key: `${team.id}-${channel.id}`,
+          teamId: team.id,
+          channelId: channel.id,
+          label: `#${channel.name}`,
+          subtitle: team.name,
+          messages: channel.messages,
+          isDirectMessage: false as const,
+          isGeneral: channel.name === "general",
+        } satisfies ChatWindowEntry;
       })
-      .filter((entry): entry is { team: Team; channel: Team["channels"][number] } => !!entry);
-  }, [openTextChannels, teams]);
-
-  useEffect(() => {
-    openChats.forEach((entry) => {
-      const key = entry.channel.id;
-      const editor = composerRefs.current[key];
-      const html = drafts[key] ?? "";
-      if (editor && editor.innerHTML !== html) {
-        editor.innerHTML = html;
-      }
-    });
-  }, [drafts, openChats]);
+      .filter((entry): entry is ChatWindowEntry => !!entry);
+  }, [openTextChannels, teams, directThreads]);
 
   useEffect(() => {
     if (!editingMessage) return;
@@ -293,21 +349,6 @@ export const PulseCalendar = ({
       editor.innerHTML = editingMessage.html;
     }
   }, [editingMessage]);
-
-  const updateComposerHtml = (channelId: string, html: string) => {
-    setDrafts((prev) => ({ ...prev, [channelId]: sanitizeRichTextHtml(html) }));
-  };
-
-  const runComposerCommand = (channelId: string, command: string, value?: string) => {
-    const editor = composerRefs.current[channelId];
-    if (!editor) return;
-    
-    editor.focus();
-    
-    // Apply the command without moving cursor
-    document.execCommand(command, false, value);
-    updateComposerHtml(channelId, editor.innerHTML);
-  };
 
   const runEditCommand = (messageId: string, command: string, value?: string) => {
     const editor = editRefs.current[messageId];
@@ -334,11 +375,12 @@ export const PulseCalendar = ({
     setWindowLayouts((prev) => {
       const next = { ...prev };
       openChats.forEach((entry, idx) => {
-        const key = `${entry.team.id}-${entry.channel.id}`;
+        const key = entry.key;
         if (!next[key]) {
+          const isTopLeftGeneral = !entry.isDirectMessage && entry.isGeneral;
           next[key] = {
-            left: Math.max(16, window.innerWidth - 368 - idx * 24),
-            top: Math.max(16, window.innerHeight - 320 - idx * 24),
+            left: isTopLeftGeneral ? 24 : Math.max(16, window.innerWidth - 368 - idx * 24),
+            top: isTopLeftGeneral ? 110 : Math.max(16, window.innerHeight - 320 - idx * 24),
             width: 360,
             height: 288,
           };
@@ -468,39 +510,49 @@ export const PulseCalendar = ({
     if (!plainText && media.length === 0) return;
 
     const createdAt = new Date().toISOString();
-    setTeams((prev) =>
-      prev.map((team) =>
-        team.id !== teamId
-          ? team
-          : {
-              ...team,
-              channels: team.channels.map((channel) =>
-                channel.id !== channelId
-                  ? channel
-                  : {
-                      ...channel,
-                      messages: [
-                        ...channel.messages,
-                        {
-                          id: crypto.randomUUID(),
-                          author: userDisplayName,
-                          authorEmail: userEmail,
-                          authorName: userDisplayName,
-                          text: plainText,
-                          html: safeHtml || undefined,
-                          createdAt,
-                          media,
-                        },
-                      ],
-                    }
-              ),
-            }
-      )
-    );
+    const createdMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      author: userDisplayName,
+      authorEmail: userEmail,
+      authorName: userDisplayName,
+      text: plainText,
+      html: safeHtml || undefined,
+      createdAt,
+      media,
+    };
+
+    if (teamId === "__dm__") {
+      setDirectThreads((prev) =>
+        prev.map((thread) =>
+          thread.memberEmail !== channelId
+            ? thread
+            : {
+                ...thread,
+                messages: [...thread.messages, createdMessage],
+              }
+        )
+      );
+    } else {
+      setTeams((prev) =>
+        prev.map((team) =>
+          team.id !== teamId
+            ? team
+            : {
+                ...team,
+                channels: team.channels.map((channel) =>
+                  channel.id !== channelId
+                    ? channel
+                    : {
+                        ...channel,
+                        messages: [...channel.messages, createdMessage],
+                      }
+                ),
+              }
+        )
+      );
+    }
 
     setDrafts((prev) => ({ ...prev, [channelId]: "" }));
-    const composer = composerRefs.current[channelId];
-    if (composer) composer.innerHTML = "";
   };
 
   const updateMessage = (
@@ -510,32 +562,54 @@ export const PulseCalendar = ({
     html: string
   ) => {
     const safeHtml = sanitizeRichTextHtml(html);
-    setTeams((prev) =>
-      prev.map((team) =>
-        team.id !== teamId
-          ? team
-          : {
-              ...team,
-              channels: team.channels.map((channel) =>
-                channel.id !== channelId
-                  ? channel
-                  : {
-                      ...channel,
-                      messages: channel.messages.map((message) =>
-                        message.id !== messageId
-                          ? message
-                          : {
-                              ...message,
-                              text: htmlToPlainText(safeHtml),
-                              html: safeHtml || undefined,
-                              updatedAt: new Date().toISOString(),
-                            }
-                      ),
-                    }
-              ),
-            }
-      )
-    );
+    if (teamId === "__dm__") {
+      setDirectThreads((prev) =>
+        prev.map((thread) =>
+          thread.memberEmail !== channelId
+            ? thread
+            : {
+                ...thread,
+                messages: thread.messages.map((message) =>
+                  message.id !== messageId
+                    ? message
+                    : {
+                        ...message,
+                        text: htmlToPlainText(safeHtml),
+                        html: safeHtml || undefined,
+                        updatedAt: new Date().toISOString(),
+                      }
+                ),
+              }
+        )
+      );
+    } else {
+      setTeams((prev) =>
+        prev.map((team) =>
+          team.id !== teamId
+            ? team
+            : {
+                ...team,
+                channels: team.channels.map((channel) =>
+                  channel.id !== channelId
+                    ? channel
+                    : {
+                        ...channel,
+                        messages: channel.messages.map((message) =>
+                          message.id !== messageId
+                            ? message
+                            : {
+                                ...message,
+                                text: htmlToPlainText(safeHtml),
+                                html: safeHtml || undefined,
+                                updatedAt: new Date().toISOString(),
+                              }
+                        ),
+                      }
+                ),
+              }
+        )
+      );
+    }
     setEditingMessage(null);
   };
 
@@ -547,23 +621,36 @@ export const PulseCalendar = ({
     if (!pendingDeleteMessage) return;
     const { teamId, channelId, messageId } = pendingDeleteMessage;
 
-    setTeams((prev) =>
-      prev.map((team) =>
-        team.id !== teamId
-          ? team
-          : {
-              ...team,
-              channels: team.channels.map((channel) =>
-                channel.id !== channelId
-                  ? channel
-                  : {
-                      ...channel,
-                      messages: channel.messages.filter((message) => message.id !== messageId),
-                    }
-              ),
-            }
-      )
-    );
+    if (teamId === "__dm__") {
+      setDirectThreads((prev) =>
+        prev.map((thread) =>
+          thread.memberEmail !== channelId
+            ? thread
+            : {
+                ...thread,
+                messages: thread.messages.filter((message) => message.id !== messageId),
+              }
+        )
+      );
+    } else {
+      setTeams((prev) =>
+        prev.map((team) =>
+          team.id !== teamId
+            ? team
+            : {
+                ...team,
+                channels: team.channels.map((channel) =>
+                  channel.id !== channelId
+                    ? channel
+                    : {
+                        ...channel,
+                        messages: channel.messages.filter((message) => message.id !== messageId),
+                      }
+                ),
+              }
+        )
+      );
+    }
 
     setEditingMessage((prev) => (prev?.messageId === messageId ? null : prev));
     setPendingDeleteMessage(null);
@@ -573,12 +660,7 @@ export const PulseCalendar = ({
     setPendingDeleteMessage(null);
   };
 
-  const renderMessageBody = (messageHtml?: string, messageText?: string) => {
-    const safeHtml = messageHtml ? sanitizeRichTextHtml(messageHtml) : escapeHtml(messageText ?? "").replace(/\n/g, "<br />");
-    return <span dangerouslySetInnerHTML={{ __html: safeHtml }} />;
-  };
-
-  const renderMediaPreview = (media: NonNullable<(typeof openChats)[number]>["channel"]["messages"][number]["media"][number]) => {
+  const renderMediaPreview = (media: ChatMessage["media"][number]) => {
     if (media.kind === "image") {
       return (
         <img
@@ -758,7 +840,11 @@ export const PulseCalendar = ({
                       >
                         <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", et.dot)} />
                         <span className={cn("flex-1 truncate text-[11px] font-medium", et.text)}>
-                          {ev.title}
+                          {ev.timeFrom && ev.timeTo
+                            ? `${ev.timeFrom}→${ev.timeTo} · ${ev.title}`
+                            : ev.time
+                              ? `${ev.time} · ${ev.title}`
+                              : ev.title}
                         </span>
                         <button
                           onClick={(e) => {
@@ -822,6 +908,24 @@ export const PulseCalendar = ({
               placeholder={`Add to ${format(parseISO(selectedDate), "MMM d")}...`}
               className="placeholder:text-muted-foreground/60 flex-1 bg-transparent text-sm outline-none"
             />
+
+            <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-black/90 px-2 py-1 text-white shadow-[0_0_18px_rgba(255,255,255,0.06)] transition-transform focus-within:scale-[1.01] focus-within:border-white/30">
+              <Clock className="h-3.5 w-3.5 text-white/70" />
+              <span className="text-[10px] font-semibold tracking-[0.18em] text-white/55">FROM</span>
+              <input
+                type="time"
+                value={quickTimeFrom}
+                onChange={(e) => setQuickTimeFrom(e.target.value)}
+                className="w-[5.4rem] bg-transparent text-xs text-white outline-none [color-scheme:dark]"
+              />
+              <span className="text-[10px] font-semibold tracking-[0.18em] text-white/55">TO</span>
+              <input
+                type="time"
+                value={quickTimeTo}
+                onChange={(e) => setQuickTimeTo(e.target.value)}
+                className="w-[5.4rem] bg-transparent text-xs text-white outline-none [color-scheme:dark]"
+              />
+            </div>
 
             <select
               value={quickTeamId}
@@ -897,6 +1001,11 @@ export const PulseCalendar = ({
                     <div key={event.id} className="rounded-xl bg-muted/60 px-3 py-2 text-sm">
                       <p className="font-medium">{event.title}</p>
                       <p className="text-muted-foreground mt-0.5 text-xs">
+                        {event.timeFrom && event.timeTo
+                          ? `${event.timeFrom}→${event.timeTo} · `
+                          : event.time
+                            ? `${event.time} · `
+                            : ""}
                         {(event.teamId && teams.find((team) => team.id === event.teamId)?.name) || "Personal"}
                       </p>
                     </div>
@@ -946,6 +1055,24 @@ export const PulseCalendar = ({
                     value={modalDate}
                     onChange={(e) => setModalDate(e.target.value)}
                     className="w-full bg-transparent text-sm outline-none"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-black/90 px-4 py-3 text-white shadow-[0_0_20px_rgba(255,255,255,0.06)] transition-transform focus-within:scale-[1.01] focus-within:border-white/30">
+                  <Clock className="h-4 w-4 shrink-0 text-white/70" strokeWidth={2} />
+                  <span className="text-[10px] font-semibold tracking-[0.18em] text-white/55">FROM</span>
+                  <input
+                    type="time"
+                    value={modalTimeFrom}
+                    onChange={(e) => setModalTimeFrom(e.target.value)}
+                    className="w-full bg-transparent text-sm text-white outline-none [color-scheme:dark]"
+                  />
+                  <span className="text-[10px] font-semibold tracking-[0.18em] text-white/55">TO</span>
+                  <input
+                    type="time"
+                    value={modalTimeTo}
+                    onChange={(e) => setModalTimeTo(e.target.value)}
+                    className="w-full bg-transparent text-sm text-white outline-none [color-scheme:dark]"
                   />
                 </div>
 
@@ -1018,11 +1145,11 @@ export const PulseCalendar = ({
       </AnimatePresence>
 
       {openChats.map((entry, idx) => {
-        const key = `${entry.team.id}-${entry.channel.id}`;
-        const draft = drafts[entry.channel.id] ?? "";
+        const key = entry.key;
+        const draft = drafts[entry.channelId] ?? "";
         const layout = windowLayouts[key] ?? {
-          left: Math.max(16, window.innerWidth - 368 - idx * 24),
-          top: Math.max(16, window.innerHeight - 320 - idx * 24),
+          left: entry.isGeneral ? 24 : Math.max(16, window.innerWidth - 368 - idx * 24),
+          top: entry.isGeneral ? 110 : Math.max(16, window.innerHeight - 320 - idx * 24),
           width: 360,
           height: 288,
         };
@@ -1092,8 +1219,8 @@ export const PulseCalendar = ({
               onPointerDown={(event) => startDragging(key, event)}
             >
               <div>
-                <p className="text-xs font-semibold">#{entry.channel.name}</p>
-                <p className="text-muted-foreground text-[10px]">{entry.team.name}</p>
+                <p className="text-xs font-semibold">{entry.label}</p>
+                <p className="text-muted-foreground text-[10px]">{entry.subtitle}</p>
               </div>
               <button
                 onPointerDown={(e) => {
@@ -1101,7 +1228,7 @@ export const PulseCalendar = ({
                 }}
                 onClick={(e) => {
                   e.stopPropagation();
-                  closeTextChannel(entry.team.id, entry.channel.id);
+                  closeTextChannel(entry.teamId, entry.channelId);
                 }}
                 className="text-muted-foreground hover:text-foreground pointer-events-auto"
               >
@@ -1110,17 +1237,18 @@ export const PulseCalendar = ({
             </div>
 
             <div className="flex-1 space-y-2 overflow-y-auto p-3">
-              {entry.channel.messages.length === 0 && (
+              {entry.messages.length === 0 && (
                 <div className="rounded-xl border border-dashed border-border p-3 text-center text-xs text-muted-foreground">
                   <MessageCircle className="mx-auto mb-1 h-4 w-4" />
                   Start chatting in this channel.
                 </div>
               )}
 
-              {entry.channel.messages.map((msg) => {
+              {entry.messages.map((msg) => {
                 const isUserMessage =
                   msg.authorEmail === userEmail || msg.author === userEmail;
-                const isLeaderMessage = msg.author === entry.team.leaderEmail;
+                const currentTeam = teams.find((team) => team.id === entry.teamId);
+                const isLeaderMessage = !entry.isDirectMessage && msg.author === currentTeam?.leaderEmail;
                 const isImportant = (msg.text ?? msg.html ?? "").includes("@Important");
                 const shouldBeGold = isLeaderMessage && isImportant;
                 const isEditing = editingMessage?.messageId === msg.id;
@@ -1199,7 +1327,7 @@ export const PulseCalendar = ({
                                 if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
                                   event.preventDefault();
                                   if (editingMessage?.html) {
-                                    updateMessage(entry.team.id, entry.channel.id, msg.id, editingMessage.html);
+                                    updateMessage(entry.teamId, entry.channelId, msg.id, editingMessage.html);
                                   }
                                 }
                               }}
@@ -1220,7 +1348,7 @@ export const PulseCalendar = ({
                               Cancel
                             </button>
                             <button
-                              onClick={() => updateMessage(entry.team.id, entry.channel.id, msg.id, editingMessage?.html ?? msg.html ?? msg.text)}
+                              onClick={() => updateMessage(entry.teamId, entry.channelId, msg.id, editingMessage?.html ?? msg.html ?? msg.text)}
                               className="rounded-lg bg-primary px-2 py-1 text-[10px] font-semibold text-primary-foreground"
                             >
                               Save
@@ -1277,8 +1405,8 @@ export const PulseCalendar = ({
                               <button
                                 onClick={() =>
                                   startEditMessage(
-                                    entry.team.id,
-                                    entry.channel.id,
+                                    entry.teamId,
+                                    entry.channelId,
                                     msg.id,
                                     sanitizeRichTextHtml(msg.html ?? escapeHtml(msg.text).replace(/\n/g, "<br />"))
                                   )
@@ -1288,7 +1416,7 @@ export const PulseCalendar = ({
                                 Edit
                               </button>
                               <button
-                                onClick={() => deleteMessage(entry.team.id, entry.channel.id, msg.id)}
+                                onClick={() => deleteMessage(entry.teamId, entry.channelId, msg.id)}
                                 className="rounded-md bg-destructive/10 px-2 py-1 text-[10px] text-destructive"
                               >
                                 Delete
@@ -1303,7 +1431,7 @@ export const PulseCalendar = ({
               })}
             </div>
 
-            {pendingDeleteMessage && pendingDeleteMessage.channelId === entry.channel.id && (
+            {pendingDeleteMessage && pendingDeleteMessage.channelId === entry.channelId && (
               <motion.div
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -1331,93 +1459,25 @@ export const PulseCalendar = ({
             )}
 
             <div className="border-border space-y-3 border-t p-3">
-              {/* Notion-style floating formatting toolbar */}
-              <AnimatePresence>
-                {showFormattingToolbar === entry.channel.id && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 8 }}
-                    className="glass-strong shadow-float flex flex-wrap items-center gap-2 rounded-2xl p-2"
-                  >
-                    <button
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        runComposerCommand(entry.channel.id, "bold");
-                      }}
-                      className="rounded-lg bg-background/70 px-2 py-1.5 text-xs font-semibold hover:bg-muted transition-colors"
-                      title="Bold"
-                    >
-                      B
-                    </button>
-                    <button
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        runComposerCommand(entry.channel.id, "italic");
-                      }}
-                      className="rounded-lg bg-background/70 px-2 py-1.5 text-xs italic hover:bg-muted transition-colors"
-                      title="Italic"
-                    >
-                      I
-                    </button>
-                    <button
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        runComposerCommand(entry.channel.id, "underline");
-                      }}
-                      className="rounded-lg bg-background/70 px-2 py-1.5 text-xs underline hover:bg-muted transition-colors"
-                      title="Underline"
-                    >
-                      U
-                    </button>
-                    <button
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        runComposerCommand(entry.channel.id, "removeFormat");
-                      }}
-                      className="ml-auto rounded-lg bg-muted/50 px-2 py-1.5 text-xs hover:bg-muted transition-colors"
-                    >
-                      Clear
-                    </button>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
-              {/* Message composer */}
-              <div className="relative rounded-xl bg-background/70 px-3 py-3 text-sm outline-none">
-                <div
-                  ref={(node) => {
-                    composerRefs.current[entry.channel.id] = node;
-                  }}
-                  contentEditable
-                  suppressContentEditableWarning
-                  onInput={(event) => updateComposerHtml(entry.channel.id, event.currentTarget.innerHTML)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      void handlePostMessage(entry.team.id, entry.channel.id, drafts[entry.channel.id] ?? "", []);
-                    }
-                  }}
-                  className="min-h-12 max-h-24 overflow-y-auto whitespace-pre-wrap break-words outline-none"
-                />
-                {!drafts[entry.channel.id] && (
-                  <span className="pointer-events-none absolute left-3 top-3 text-muted-foreground/60 text-sm">
-                    Type a message...
-                  </span>
-                )}
-              </div>
+              <ChatInputEditor
+                valueHtml={draft}
+                placeholder="Type a message..."
+                onChangeHtml={(html) =>
+                  setDrafts((prev) => ({
+                    ...prev,
+                    [entry.channelId]: sanitizeRichTextHtml(html),
+                  }))
+                }
+                onSubmit={async ({ html }) => {
+                  await handlePostMessage(entry.teamId, entry.channelId, html, []);
+                }}
+                onRegisterSubmit={(submit) => {
+                  submitEditorRefs.current[entry.channelId] = submit;
+                }}
+              />
 
               {/* Action buttons */}
               <div className="flex items-center justify-between gap-2">
-                {/* Format button */}
-                <button
-                  onClick={() => setShowFormattingToolbar(showFormattingToolbar === entry.channel.id ? null : entry.channel.id)}
-                  className="group relative h-10 w-10 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 hover:from-primary/30 hover:to-primary/20 transition-all flex items-center justify-center text-muted-foreground hover:text-primary"
-                  title="Text formatting"
-                >
-                  <Sliders className="h-4 w-4" />
-                </button>
-
                 {/* Media button */}
                 <label className="group relative h-10 w-10 rounded-full bg-gradient-to-br from-primary/20 to-primary/10 hover:from-primary/30 hover:to-primary/20 transition-all flex items-center justify-center text-muted-foreground hover:text-primary cursor-pointer">
                   <Paperclip className="h-4 w-4" />
@@ -1428,7 +1488,7 @@ export const PulseCalendar = ({
                     onChange={async (e) => {
                       const files = Array.from(e.target.files ?? []);
                       if (files.length === 0) return;
-                      await handlePostMessage(entry.team.id, entry.channel.id, drafts[entry.channel.id] ?? "", files);
+                      await handlePostMessage(entry.teamId, entry.channelId, drafts[entry.channelId] ?? "", files);
                       e.target.value = "";
                     }}
                   />
@@ -1437,16 +1497,16 @@ export const PulseCalendar = ({
                 {/* Voice note button */}
                 <button
                   onClick={() => {
-                    if (isRecording === entry.channel.id) {
+                    if (isRecording === entry.channelId) {
                       setIsRecording(null);
                       // TODO: Handle voice recording completion
                     } else {
-                      setIsRecording(entry.channel.id);
+                      setIsRecording(entry.channelId);
                     }
                   }}
                   className={cn(
                     "relative h-10 w-10 rounded-full transition-all flex items-center justify-center",
-                    isRecording === entry.channel.id
+                    isRecording === entry.channelId
                       ? "bg-red-500/30 text-red-500 animate-pulse"
                       : "bg-gradient-to-br from-primary/20 to-primary/10 hover:from-primary/30 hover:to-primary/20 text-muted-foreground hover:text-primary"
                   )}
@@ -1457,7 +1517,7 @@ export const PulseCalendar = ({
 
                 {/* Send button */}
                 <button
-                  onClick={() => void handlePostMessage(entry.team.id, entry.channel.id, drafts[entry.channel.id] ?? "", [])}
+                  onClick={() => submitEditorRefs.current[entry.channelId]?.()}
                   className="ml-auto h-10 w-10 rounded-full bg-gradient-primary text-primary-foreground shadow-glow hover:shadow-glow/80 flex items-center justify-center transition-shadow disabled:opacity-50"
                 >
                   <ArrowRight className="h-4 w-4" />

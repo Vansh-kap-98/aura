@@ -10,7 +10,6 @@ import {
   Lock,
   MoreHorizontal,
   Megaphone,
-  MessageCircle,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { format, parseISO, isAfter, startOfDay } from "date-fns";
@@ -139,11 +138,6 @@ export const TeamSidebar = ({
       return allowed.includes(userEmail) || activeTeam.leaderEmail === userEmail;
     });
   }, [activeTeam, userEmail]);
-
-  const dmChannels = useMemo(() => {
-    if (!activeTeam) return [];
-    return activeTeam.channels.filter((channel) => channel.type === "dm");
-  }, [activeTeam]);
 
   const activeTeamMembers = useMemo(() => {
     if (!activeTeam) return [userEmail];
@@ -353,6 +347,7 @@ export const TeamSidebar = ({
     onAddEvent({
       id: crypto.randomUUID(),
       date: meetingDate,
+      time: meetingTime,
       title: `${meetingTitle.trim()} (${selectedChannel.channel.name})`,
       type: "meetingReminder",
       scope: "space",
@@ -545,37 +540,6 @@ export const TeamSidebar = ({
                       </div>
                     );
                   })}
-
-                  {dmChannels.length > 0 && (
-                    <div className="mt-4 space-y-2">
-                      <div className="px-3 py-1">
-                        <span className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">
-                          Direct Messages
-                        </span>
-                      </div>
-                      <div className="space-y-0.5">
-                        {dmChannels.map((dm) => (
-                          <button
-                            key={dm.id}
-                            onClick={() => onOpenTextChannel(activeTeam.id, dm.id)}
-                            className="hover:bg-muted/60 flex w-full items-center justify-between rounded-xl px-3 py-2 text-sm transition-colors"
-                          >
-                            <span className="flex items-center gap-2">
-                              <MessageCircle className="text-muted-foreground h-3.5 w-3.5" />
-                              <span className="text-foreground/80 hover:text-foreground">
-                                {dm.dmMemberName || dm.dmMemberEmail || dm.name}
-                              </span>
-                            </span>
-                            {dm.unread > 0 && (
-                              <span className="bg-primary text-primary-foreground min-w-[1.25rem] rounded-full px-1.5 py-0.5 text-center text-[10px] font-semibold">
-                                {dm.unread}
-                              </span>
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
 
                   <AnimatePresence>
                     {addingChannel ? (

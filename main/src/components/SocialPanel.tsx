@@ -1,4 +1,4 @@
-import { Dispatch, SetStateAction, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Zap,
@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Channel, Team } from "@/types/collab";
+import { Team } from "@/types/collab";
 
 // Derive a consistent gradient from an email string
 const getColorFromEmail = (email: string): string => {
@@ -44,8 +44,7 @@ const VIBE_BARS = [40, 55, 35, 60, 75, 50, 85, 90, 70, 95, 80, 88];
 
 type SocialPanelProps = {
   activeTeam: Team | null;
-  setTeams: Dispatch<SetStateAction<Team[]>>;
-  onOpenTextChannel: (teamId: string, channelId: string) => void;
+  onOpenDirectMessage: (memberEmail: string, memberName?: string) => void;
   userEmail: string;
   userDisplayName: string;
 };
@@ -58,19 +57,11 @@ const sanitizeChannel = (name: string) =>
     .replace(/[^a-z0-9-]/g, "")
     .replace(/^#/, "");
 
-  const DEMO_MEMBER_EMAIL = "teammate.demo@syncro.app";
-  const DEMO_AUTO_REPLY = "hi";
-
-const isPrivateDmFor = (channel: Channel, userA: string, userB: string) => {
-  const allowed = channel.settings.hidden?.allowedEmails ?? [];
-  if (allowed.length !== 2) return false;
-  return allowed.includes(userA) && allowed.includes(userB);
-};
+const DEMO_MEMBER_EMAIL = "teammate.demo@syncro.app";
 
 export const SocialPanel = ({
   activeTeam,
-  setTeams,
-  onOpenTextChannel,
+  onOpenDirectMessage,
   userEmail,
   userDisplayName,
 }: SocialPanelProps) => {
@@ -118,87 +109,8 @@ export const SocialPanel = ({
       return;
     }
 
-    const existing = activeTeam.channels.find((channel) =>
-      isPrivateDmFor(channel, userEmail, targetEmail)
-    );
-
-    const channelId = existing?.id ?? crypto.randomUUID();
-
-    if (!existing) {
-      const dmChannel: Channel = {
-        id: channelId,
-        name: `dm-${sanitizeChannel(targetEmail.split("@")[0] || targetEmail)}`,
-        unread: 0,
-        type: "text",
-        settings: {
-          text: {
-            allowAllMedia: true,
-            slowModeSeconds: 0,
-          },
-          hidden: {
-            allowedEmails: [userEmail, targetEmail],
-          },
-        },
-        messages:
-          targetEmail === DEMO_MEMBER_EMAIL
-            ? [
-                {
-                  id: crypto.randomUUID(),
-                  author: DEMO_MEMBER_EMAIL,
-                  authorEmail: DEMO_MEMBER_EMAIL,
-                  authorName: DEMO_MEMBER_EMAIL,
-                  text: DEMO_AUTO_REPLY,
-                  createdAt: new Date().toISOString(),
-                  media: [],
-                },
-              ]
-            : [],
-      };
-
-      setTeams((prev) =>
-        prev.map((team) =>
-          team.id === activeTeam.id
-            ? { ...team, channels: [...team.channels, dmChannel] }
-            : team
-        )
-      );
-    } else if (targetEmail === DEMO_MEMBER_EMAIL) {
-      setTeams((prev) =>
-        prev.map((team) =>
-          team.id !== activeTeam.id
-            ? team
-            : {
-                ...team,
-                channels: team.channels.map((channel) => {
-                  if (channel.id !== existing.id) return channel;
-                  const alreadyHasReply = channel.messages.some(
-                    (message) =>
-                      message.authorEmail === DEMO_MEMBER_EMAIL &&
-                      message.text.toLowerCase() === DEMO_AUTO_REPLY
-                  );
-                  if (alreadyHasReply) return channel;
-                  return {
-                    ...channel,
-                    messages: [
-                      ...channel.messages,
-                      {
-                        id: crypto.randomUUID(),
-                        author: DEMO_MEMBER_EMAIL,
-                        authorEmail: DEMO_MEMBER_EMAIL,
-                        authorName: DEMO_MEMBER_EMAIL,
-                        text: DEMO_AUTO_REPLY,
-                        createdAt: new Date().toISOString(),
-                        media: [],
-                      },
-                    ],
-                  };
-                }),
-              }
-        )
-      );
-    }
-
-    onOpenTextChannel(activeTeam.id, channelId);
+    onOpenDirectMessage(targetEmail, targetEmail);
+    toast.success(`Opened private chat with ${targetEmail}`);
   };
 
   const handleCall = (targetEmail: string) => {

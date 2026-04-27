@@ -82,10 +82,20 @@ export type Team = {
 export type WorkspaceEvent = {
   id: string;
   date: string;
+  time?: string;
+  timeFrom?: string;
+  timeTo?: string;
   title: string;
   type: WorkspaceEventType;
   scope: EventScope;
   teamId?: string;
   assigneeEmail?: string;
   sourceChannelId?: string;
+};
+
+export type DirectMessageThread = {
+  id: string;
+  memberEmail: string;
+  memberName: string;
+  messages: ChatMessage[];
 };

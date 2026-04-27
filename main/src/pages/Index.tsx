@@ -10,12 +10,16 @@ import {
   Team,
   WorkspaceEvent,
   ChatMessage,
+  DirectMessageThread,
 } from "@/types/collab";
 
 const TEAMS_KEY = "mesh_teams";
 const ACTIVE_KEY = "mesh_active_team";
 const EVENTS_KEY = "mesh_calendar_events";
 const CALENDAR_SPACES_KEY = "mesh_calendar_selected_spaces";
+const DM_THREADS_KEY = "mesh_direct_threads";
+const DEMO_MEMBER_EMAIL = "teammate.demo@syncro.app";
+const DEMO_AUTO_REPLY = "hi";
 
 const createDefaultChannel = (name: string): Channel => ({
   id: crypto.randomUUID(),
@@ -55,7 +59,9 @@ const normalizeChatMessage = (
 });
 
 const normalizeTeam = (raw: Team, fallbackLeader: string): Team => {
-  const channels = (raw.channels || []).map((channel) => ({
+  const channels = (raw.channels || [])
+    .filter((channel) => channel.type !== "dm")
+    .map((channel) => ({
     ...channel,
     type: channel.type ?? "text",
     settings: {
@@ -106,6 +112,18 @@ const normalizeTeam = (raw: Team, fallbackLeader: string): Team => {
   };
 };
 
+const normalizeDirectThread = (
+  raw: Partial<DirectMessageThread> & { memberEmail?: string },
+  fallbackAuthorEmail: string
+): DirectMessageThread => ({
+  id: raw.id ?? crypto.randomUUID(),
+  memberEmail: raw.memberEmail ?? "unknown@syncro.app",
+  memberName: raw.memberName ?? raw.memberEmail ?? "Unknown",
+  messages: (raw.messages ?? []).map((message) =>
+    normalizeChatMessage(message, fallbackAuthorEmail, fallbackAuthorEmail)
+  ),
+});
+
 const Index = () => {
   const { user } = useAuth();
   const userEmail = user?.email ?? "demo@syncro.app";
@@ -147,6 +165,16 @@ const Index = () => {
   const [openTextChannels, setOpenTextChannels] = useState<
     Array<{ teamId: string; channelId: string }>
   >([]);
+  const [directThreads, setDirectThreads] = useState<DirectMessageThread[]>(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(DM_THREADS_KEY) || "[]") as Array<
+        Partial<DirectMessageThread>
+      >;
+      return parsed.map((thread) => normalizeDirectThread(thread, userEmail));
+    } catch {
+      return [];
+    }
+  });
 
   useEffect(() => {
     setUserDisplayName(readNickname(userEmail) || userEmail);
@@ -172,6 +200,10 @@ const Index = () => {
     localStorage.setItem(CALENDAR_SPACES_KEY, JSON.stringify(selectedCalendarTeamIds));
   }, [selectedCalendarTeamIds]);
 
+  useEffect(() => {
+    localStorage.setItem(DM_THREADS_KEY, JSON.stringify(directThreads));
+  }, [directThreads]);
+
   const activeTeam = useMemo(
     () => teams.find((team) => team.id === activeTeamId) ?? null,
     [teams, activeTeamId]
@@ -190,6 +222,74 @@ const Index = () => {
     setOpenTextChannels((prev) =>
       prev.filter((p) => !(p.teamId === teamId && p.channelId === channelId))
     );
+  };
+
+  const openDirectChat = (memberEmail: string, memberName?: string) => {
+    const normalizedEmail = memberEmail.trim().toLowerCase();
+    if (!normalizedEmail) return;
+
+    setDirectThreads((prev) => {
+      const existing = prev.find((thread) => thread.memberEmail === normalizedEmail);
+      if (existing) {
+        if (normalizedEmail !== DEMO_MEMBER_EMAIL) return prev;
+        const alreadyHasReply = existing.messages.some(
+          (message) =>
+            message.authorEmail === DEMO_MEMBER_EMAIL &&
+            message.text.toLowerCase() === DEMO_AUTO_REPLY
+        );
+        if (alreadyHasReply) return prev;
+        return prev.map((thread) =>
+          thread.memberEmail !== normalizedEmail
+            ? thread
+            : {
+                ...thread,
+                messages: [
+                  ...thread.messages,
+                  {
+                    id: crypto.randomUUID(),
+                    author: DEMO_MEMBER_EMAIL,
+                    authorEmail: DEMO_MEMBER_EMAIL,
+                    authorName: DEMO_MEMBER_EMAIL,
+                    text: DEMO_AUTO_REPLY,
+                    createdAt: new Date().toISOString(),
+                    media: [],
+                  },
+                ],
+              }
+        );
+      }
+
+      return [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          memberEmail: normalizedEmail,
+          memberName: memberName || normalizedEmail,
+          messages:
+            normalizedEmail === DEMO_MEMBER_EMAIL
+              ? [
+                  {
+                    id: crypto.randomUUID(),
+                    author: DEMO_MEMBER_EMAIL,
+                    authorEmail: DEMO_MEMBER_EMAIL,
+                    authorName: DEMO_MEMBER_EMAIL,
+                    text: DEMO_AUTO_REPLY,
+                    createdAt: new Date().toISOString(),
+                    media: [],
+                  },
+                ]
+              : [],
+        },
+      ];
+    });
+
+    setOpenTextChannels((prev) => {
+      const exists = prev.some(
+        (entry) => entry.teamId === "__dm__" && entry.channelId === normalizedEmail
+      );
+      if (exists) return prev;
+      return [...prev, { teamId: "__dm__", channelId: normalizedEmail }];
+    });
   };
 
   return (
@@ -217,13 +317,14 @@ const Index = () => {
           openTextChannels={openTextChannels}
           closeTextChannel={closeChannelChat}
           setTeams={setTeams}
+          directThreads={directThreads}
+          setDirectThreads={setDirectThreads}
           userEmail={userEmail}
           userDisplayName={userDisplayName}
         />
         <SocialPanel
           activeTeam={activeTeam}
-          setTeams={setTeams}
-          onOpenTextChannel={openChannelChat}
+          onOpenDirectMessage={openDirectChat}
           userEmail={userEmail}
           userDisplayName={userDisplayName}
         />

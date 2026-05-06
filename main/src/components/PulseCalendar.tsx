@@ -205,12 +205,16 @@ export const PulseCalendar = ({
 
   const grid = buildGrid(currentMonth);
   const selectedTeamsSet = useMemo(() => new Set(selectedCalendarTeamIds), [selectedCalendarTeamIds]);
+  const visibleTeamIds = useMemo(
+    () => (selectedCalendarTeamIds.length === 0 ? [] : selectedCalendarTeamIds),
+    [selectedCalendarTeamIds, teams]
+  );
 
   const teamMembers = useMemo(() => {
     const emails = new Set<string>([userEmail]);
 
     teams
-      .filter((team) => selectedTeamsSet.has(team.id))
+      .filter((team) => visibleTeamIds.includes(team.id))
       .forEach((team) => {
         emails.add(team.leaderEmail);
         team.channels.forEach((channel) => {
@@ -222,12 +226,12 @@ export const PulseCalendar = ({
       });
 
     return Array.from(emails).sort((a, b) => a.localeCompare(b));
-  }, [teams, selectedTeamsSet, userEmail]);
+  }, [teams, userEmail, visibleTeamIds]);
 
   const visibleEvents = useMemo(() => {
     return events.filter((event) => {
       const isPersonal = !event.teamId || event.scope === "personal";
-      const isSelectedSpaceEvent = !!event.teamId && selectedTeamsSet.has(event.teamId);
+      const isSelectedSpaceEvent = !event.teamId || visibleTeamIds.includes(event.teamId);
       if (!isPersonal && !isSelectedSpaceEvent) return false;
 
       if (memberFilter === "all") return true;

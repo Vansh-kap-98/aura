@@ -5,7 +5,7 @@ type SyncroLogoProps = {
 export const SyncroLogo = ({ className }: SyncroLogoProps) => {
   return (
     <img
-      src="/logo_syncro.png"
+      src="/syncrologo.png"
       alt="Syncro logo"
       className={className}
       draggable={false}

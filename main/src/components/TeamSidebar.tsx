@@ -374,7 +374,7 @@ export const TeamSidebar = ({
             <SyncroLogo className="h-full w-full" />
           </div>
           <div className="leading-tight">
-            <h1 className="bg-gradient-to-r from-primary via-fuchsia-500 to-cyan-400 bg-clip-text text-2xl font-extrabold tracking-tight text-transparent">
+            <h1 className="bg-gradient-to-r from-black via-gray-500 to-white bg-clip-text text-2xl font-extrabold tracking-tight text-transparent">
               Syncro
             </h1>
             <p className="text-muted-foreground text-[10px] font-medium">made by V-designs</p>

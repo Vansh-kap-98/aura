@@ -15,6 +15,8 @@ import { useNavigate } from "react-router-dom";
 import { format, parseISO, isAfter, startOfDay } from "date-fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DatePicker } from "@/components/ui/date-picker";
 import { useAuth } from "@/context/AuthContext";
 import { SyncroLogo } from "@/components/SyncroLogo";
 import {
@@ -374,7 +376,7 @@ export const TeamSidebar = ({
             <SyncroLogo className="h-full w-full" />
           </div>
           <div className="leading-tight">
-            <h1 className="bg-gradient-to-r from-black via-gray-500 to-white bg-clip-text text-2xl font-extrabold tracking-tight text-transparent">
+            <h1 className="bg-gradient-to-r from-white via-gray-200 via-gray-600 to-black bg-clip-text text-2xl font-extrabold tracking-tight text-transparent">
               Syncro
             </h1>
             <p className="text-muted-foreground text-[10px] font-medium">made by V-designs</p>
@@ -977,18 +979,20 @@ export const TeamSidebar = ({
                         className="w-full rounded-xl bg-background/50 px-3 py-2 text-sm outline-none"
                       />
                       <div className="grid grid-cols-2 gap-2">
-                        <input
-                          type="date"
+                        <DatePicker
                           value={meetingDate}
-                          onChange={(e) => setMeetingDate(e.target.value)}
-                          className="rounded-xl bg-background/50 px-3 py-2 text-sm outline-none"
+                          onChange={setMeetingDate}
+                          placeholder="Pick a date"
+                          buttonClassName="h-11 rounded-xl bg-background/50 px-3"
                         />
-                        <input
-                          type="time"
-                          value={meetingTime}
-                          onChange={(e) => setMeetingTime(e.target.value)}
-                          className="rounded-xl bg-background/50 px-3 py-2 text-sm outline-none"
-                        />
+                        <div className="flex h-11 items-center rounded-xl border border-white/10 bg-[linear-gradient(180deg,hsl(220_12%_14%_/_0.95),hsl(220_12%_10%_/_0.95))] px-3 text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+                          <input
+                            type="time"
+                            value={meetingTime}
+                            onChange={(e) => setMeetingTime(e.target.value)}
+                            className="w-full bg-transparent outline-none [color-scheme:dark]"
+                          />
+                        </div>
                       </div>
                       <input
                         type="number"
@@ -999,17 +1003,18 @@ export const TeamSidebar = ({
                         placeholder="Duration mins"
                         className="w-full rounded-xl bg-background/50 px-3 py-2 text-sm outline-none"
                       />
-                      <select
-                        value={meetingAssigneeEmail}
-                        onChange={(e) => setMeetingAssigneeEmail(e.target.value)}
-                        className="w-full rounded-xl bg-background/50 px-3 py-2 text-sm outline-none"
-                      >
-                        {activeTeamMembers.map((member) => (
-                          <option key={member} value={member}>
-                            Assign to: {member}
-                          </option>
-                        ))}
-                      </select>
+                      <Select value={meetingAssigneeEmail} onValueChange={setMeetingAssigneeEmail}>
+                        <SelectTrigger className="w-auto max-w-[calc(100%-0.5rem)] border-white/10 bg-[linear-gradient(180deg,hsl(220_12%_15%_/_0.98),hsl(220_12%_9%_/_0.98))] text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_12px_28px_-20px_rgba(0,0,0,0.95)]">
+                          <SelectValue placeholder="Assign to" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {activeTeamMembers.map((member) => (
+                            <SelectItem key={member} value={member}>
+                              Assign to: {member}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                       <button
                         onClick={saveScheduledMeeting}
                         className="bg-gradient-primary text-primary-foreground w-full rounded-xl py-2 text-sm font-semibold"

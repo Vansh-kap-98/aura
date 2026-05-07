@@ -7,7 +7,11 @@ export type WorkspaceEventType =
   | "deadline"
   | "focus"
   | "social"
-  | "meetingReminder";
+  | "meetingReminder"
+  | "planning"
+  | "review"
+  | "deepWork"
+  | "followUp";
 
 export type ChatMedia = {
   id: string;

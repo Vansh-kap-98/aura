@@ -7,7 +7,6 @@ import {
   Plus,
   X,
   Check,
-  Calendar as CalIcon,
   Paperclip,
   MessageCircle,
   Mic,
@@ -28,6 +27,8 @@ import {
 } from "date-fns";
 import { cn } from "@/lib/utils";
 import { filesToMedia, htmlToPlainText, sanitizeRichTextHtml } from "@/lib/message-utils";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DatePicker } from "@/components/ui/date-picker";
 import { ChatMessage, DirectMessageThread, Team, WorkspaceEvent, WorkspaceEventType } from "@/types/collab";
 import { ChatInputEditor } from "@/components/ChatInputEditor";
 
@@ -132,6 +133,30 @@ const EVENT_TYPES: {
     label: "Social",
     dot: "bg-emerald-400",
     text: "text-emerald-700 dark:text-emerald-300",
+  },
+  {
+    type: "planning",
+    label: "Planning",
+    dot: "bg-cyan-400",
+    text: "text-cyan-700 dark:text-cyan-300",
+  },
+  {
+    type: "review",
+    label: "Review",
+    dot: "bg-orange-400",
+    text: "text-orange-700 dark:text-orange-300",
+  },
+  {
+    type: "deepWork",
+    label: "Deep Work",
+    dot: "bg-indigo-400",
+    text: "text-indigo-700 dark:text-indigo-300",
+  },
+  {
+    type: "followUp",
+    label: "Follow-up",
+    dot: "bg-lime-400",
+    text: "text-lime-700 dark:text-lime-300",
   },
 ];
 
@@ -767,21 +792,22 @@ export const PulseCalendar = ({
         <span className="text-muted-foreground ml-auto flex items-center gap-1 font-semibold uppercase tracking-wider">
           <Users className="h-3.5 w-3.5" /> Member
         </span>
-        <select
-          value={memberFilter}
-          onChange={(e) => setMemberFilter(e.target.value)}
-          className="rounded-xl bg-muted px-2 py-1 text-xs outline-none"
-        >
-          <option value="all">All members</option>
-          {teamMembers.map((member) => (
-            <option key={member} value={member}>
-              {member}
-            </option>
-          ))}
-        </select>
+        <Select value={memberFilter} onValueChange={setMemberFilter}>
+          <SelectTrigger className="w-auto max-w-[10rem] border-white/10 bg-[linear-gradient(180deg,hsl(220_12%_15%_/_0.98),hsl(220_12%_9%_/_0.98))] text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_12px_28px_-20px_rgba(0,0,0,0.95)]">
+            <SelectValue placeholder="All members" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All members</SelectItem>
+            {teamMembers.map((member) => (
+              <SelectItem key={member} value={member}>
+                {member}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
-      <div className="glass shadow-soft flex flex-1 flex-col overflow-hidden rounded-3xl p-4">
+      <div className={cn("glass shadow-soft flex flex-col overflow-hidden rounded-3xl p-4 transition-all duration-300", showModal ? "flex-[0.45]" : "flex-1")}>
         <div className="grid grid-cols-7 gap-1 pb-2">
           {WEEKDAYS.map((d) => (
             <div
@@ -931,18 +957,19 @@ export const PulseCalendar = ({
               />
             </div>
 
-            <select
-              value={quickTeamId}
-              onChange={(e) => setQuickTeamId(e.target.value)}
-              className="rounded-xl bg-muted px-2 py-1 text-xs"
-            >
-              <option value="personal">Personal</option>
-              {teams.map((team) => (
-                <option key={team.id} value={team.id}>
-                  {team.name}
-                </option>
-              ))}
-            </select>
+            <Select value={quickTeamId} onValueChange={setQuickTeamId}>
+              <SelectTrigger className="w-auto max-w-[10rem] border-white/10 bg-[linear-gradient(180deg,hsl(220_12%_15%_/_0.98),hsl(220_12%_9%_/_0.98))] text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_12px_28px_-20px_rgba(0,0,0,0.95)]">
+                <SelectValue placeholder="Personal" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="personal">Personal</SelectItem>
+                {teams.map((team) => (
+                  <SelectItem key={team.id} value={team.id}>
+                    {team.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
 
             <button
               onClick={addQuickEvent}
@@ -1052,17 +1079,9 @@ export const PulseCalendar = ({
               </div>
 
               <div className="space-y-3">
-                <div className="glass flex items-center gap-3 rounded-2xl px-4 py-3 focus-within:ring-2 focus-within:ring-primary/40">
-                  <CalIcon className="h-4 w-4 shrink-0 text-muted-foreground" strokeWidth={2} />
-                  <input
-                    type="date"
-                    value={modalDate}
-                    onChange={(e) => setModalDate(e.target.value)}
-                    className="w-full bg-transparent text-sm outline-none"
-                  />
-                </div>
+                <DatePicker value={modalDate} onChange={setModalDate} placeholder="Pick a date" buttonClassName="h-12" />
 
-                <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-black/90 px-4 py-3 text-white shadow-[0_0_20px_rgba(255,255,255,0.06)] transition-transform focus-within:scale-[1.01] focus-within:border-white/30">
+                <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-[linear-gradient(180deg,hsl(220_12%_12%_/_0.98),hsl(220_12%_8%_/_0.98))] px-4 py-3 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_12px_28px_-20px_rgba(0,0,0,0.95)] transition-transform focus-within:scale-[1.01] focus-within:border-white/30">
                   <Clock className="h-4 w-4 shrink-0 text-white/70" strokeWidth={2} />
                   <span className="text-[10px] font-semibold tracking-[0.18em] text-white/55">FROM</span>
                   <input
@@ -1096,18 +1115,19 @@ export const PulseCalendar = ({
 
                 <div className="glass rounded-2xl p-2">
                   <p className="px-2 pb-1 text-[11px] font-semibold uppercase text-muted-foreground">Space</p>
-                  <select
-                    value={modalTeamId}
-                    onChange={(e) => setModalTeamId(e.target.value)}
-                    className="w-full rounded-xl bg-muted px-3 py-2 text-xs outline-none"
-                  >
-                    <option value="personal">Personal</option>
-                    {teams.map((team) => (
-                      <option key={team.id} value={team.id}>
-                        {team.name}
-                      </option>
-                    ))}
-                  </select>
+                  <Select value={modalTeamId} onValueChange={setModalTeamId}>
+                    <SelectTrigger className="w-auto max-w-[calc(100%-0.5rem)] border-white/10 bg-[linear-gradient(180deg,hsl(220_12%_15%_/_0.98),hsl(220_12%_9%_/_0.98))] text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_12px_28px_-20px_rgba(0,0,0,0.95)]">
+                      <SelectValue placeholder="Personal" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="personal">Personal</SelectItem>
+                      {teams.map((team) => (
+                        <SelectItem key={team.id} value={team.id}>
+                          {team.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div className="grid grid-cols-3 gap-2">

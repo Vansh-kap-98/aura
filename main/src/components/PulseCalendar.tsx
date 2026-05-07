@@ -24,11 +24,13 @@ import {
   isSameMonth,
   isToday,
   parseISO,
+  subMinutes,
 } from "date-fns";
 import { cn } from "@/lib/utils";
 import { filesToMedia, htmlToPlainText, sanitizeRichTextHtml } from "@/lib/message-utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { DatePicker } from "@/components/ui/date-picker";
+import { DatePicker, TimePicker } from "@/components/ui/date-picker";
+import { Checkbox } from "@/components/ui/checkbox";
 import { ChatMessage, DirectMessageThread, Team, WorkspaceEvent, WorkspaceEventType } from "@/types/collab";
 import { ChatInputEditor } from "@/components/ChatInputEditor";
 
@@ -201,6 +203,10 @@ export const PulseCalendar = ({
   const [modalTitle, setModalTitle] = useState("");
   const [modalType, setModalType] = useState<WorkspaceEventType>("meeting");
   const [modalTeamId, setModalTeamId] = useState<string>("personal");
+  const [modalPriority, setModalPriority] = useState(false);
+  const [modalReminderDate, setModalReminderDate] = useState("");
+  const [modalReminderTime, setModalReminderTime] = useState("");
+  const [modalReminderLocked, setModalReminderLocked] = useState(false);
   const [memberFilter, setMemberFilter] = useState<string>("all");
   const [deadlinePreviewDate, setDeadlinePreviewDate] = useState<string | null>(null);
 
@@ -266,14 +272,27 @@ export const PulseCalendar = ({
 
   const eventsFor = (dateKey: string) => visibleEvents.filter((e) => e.date === dateKey);
 
+  const getDefaultReminder = (date: string, timeFrom: string) => {
+    const eventStart = parseISO(`${date}T${timeFrom}:00`);
+    const reminderDate = format(subMinutes(eventStart, 30), "yyyy-MM-dd");
+    const reminderTime = format(subMinutes(eventStart, 30), "HH:mm");
+    return { reminderDate, reminderTime };
+  };
+
   const createEvent = (
     date: string,
     title: string,
     type: WorkspaceEventType,
     timeFrom: string,
     timeTo: string,
-    teamId?: string
+    teamId?: string,
+    reminder?: { priority: boolean; reminderDate?: string; reminderTime?: string }
   ) => {
+    const priority = reminder?.priority ?? false;
+    const defaultReminder = getDefaultReminder(date, timeFrom);
+    const reminderDate = priority ? reminder?.reminderDate ?? defaultReminder.reminderDate : undefined;
+    const reminderTime = priority ? reminder?.reminderTime ?? defaultReminder.reminderTime : undefined;
+
     setEvents((prev) => [
       ...prev,
       {
@@ -287,6 +306,9 @@ export const PulseCalendar = ({
         scope: teamId ? "space" : "personal",
         teamId,
         assigneeEmail: userEmail,
+        priority,
+        reminderDate,
+        reminderTime,
       },
     ]);
   };
@@ -312,12 +334,19 @@ export const PulseCalendar = ({
       modalType,
       modalTimeFrom,
       modalTimeTo,
-      modalTeamId === "personal" ? undefined : modalTeamId
+      modalTeamId === "personal" ? undefined : modalTeamId,
+      modalPriority
+        ? { priority: true, reminderDate: modalReminderDate, reminderTime: modalReminderTime }
+        : { priority: false }
     );
     setModalTitle("");
     setModalDate(todayKey());
     setModalTimeFrom("09:00");
     setModalTimeTo("10:00");
+    setModalPriority(false);
+    setModalReminderDate("");
+    setModalReminderTime("");
+    setModalReminderLocked(false);
     setShowModal(false);
   };
 
@@ -330,8 +359,19 @@ export const PulseCalendar = ({
     setModalTitle("");
     setModalType("meeting");
     setModalTeamId(activeTeam?.id ?? "personal");
+    setModalPriority(false);
+    setModalReminderDate("");
+    setModalReminderTime("");
+    setModalReminderLocked(false);
     setShowModal(true);
   };
+
+  useEffect(() => {
+    if (!modalPriority || modalReminderLocked) return;
+    const { reminderDate, reminderTime } = getDefaultReminder(modalDate, modalTimeFrom);
+    setModalReminderDate(reminderDate);
+    setModalReminderTime(reminderTime);
+  }, [modalPriority, modalDate, modalTimeFrom, modalReminderLocked]);
 
   const openChats = useMemo(() => {
     return openTextChannels
@@ -942,18 +982,18 @@ export const PulseCalendar = ({
             <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-black/90 px-2 py-1 text-white shadow-[0_0_18px_rgba(255,255,255,0.06)] transition-transform focus-within:scale-[1.01] focus-within:border-white/30">
               <Clock className="h-3.5 w-3.5 text-white/70" />
               <span className="text-[10px] font-semibold tracking-[0.18em] text-white/55">FROM</span>
-              <input
-                type="time"
+              <TimePicker
                 value={quickTimeFrom}
-                onChange={(e) => setQuickTimeFrom(e.target.value)}
-                className="w-[5.4rem] bg-transparent text-xs text-white outline-none [color-scheme:dark]"
+                onChange={setQuickTimeFrom}
+                placeholder="09:00"
+                buttonClassName="h-8 w-[5.4rem] border-0 bg-transparent px-0 text-xs shadow-none hover:bg-white/5 focus:ring-0"
               />
               <span className="text-[10px] font-semibold tracking-[0.18em] text-white/55">TO</span>
-              <input
-                type="time"
+              <TimePicker
                 value={quickTimeTo}
-                onChange={(e) => setQuickTimeTo(e.target.value)}
-                className="w-[5.4rem] bg-transparent text-xs text-white outline-none [color-scheme:dark]"
+                onChange={setQuickTimeTo}
+                placeholder="10:00"
+                buttonClassName="h-8 w-[5.4rem] border-0 bg-transparent px-0 text-xs shadow-none hover:bg-white/5 focus:ring-0"
               />
             </div>
 
@@ -1084,18 +1124,18 @@ export const PulseCalendar = ({
                 <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-[linear-gradient(180deg,hsl(220_12%_12%_/_0.98),hsl(220_12%_8%_/_0.98))] px-4 py-3 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.05),0_12px_28px_-20px_rgba(0,0,0,0.95)] transition-transform focus-within:scale-[1.01] focus-within:border-white/30">
                   <Clock className="h-4 w-4 shrink-0 text-white/70" strokeWidth={2} />
                   <span className="text-[10px] font-semibold tracking-[0.18em] text-white/55">FROM</span>
-                  <input
-                    type="time"
+                  <TimePicker
                     value={modalTimeFrom}
-                    onChange={(e) => setModalTimeFrom(e.target.value)}
-                    className="w-full bg-transparent text-sm text-white outline-none [color-scheme:dark]"
+                    onChange={setModalTimeFrom}
+                    placeholder="09:00"
+                    buttonClassName="h-8 flex-1 border-0 bg-transparent px-0 text-sm shadow-none hover:bg-white/5 focus:ring-0"
                   />
                   <span className="text-[10px] font-semibold tracking-[0.18em] text-white/55">TO</span>
-                  <input
-                    type="time"
+                  <TimePicker
                     value={modalTimeTo}
-                    onChange={(e) => setModalTimeTo(e.target.value)}
-                    className="w-full bg-transparent text-sm text-white outline-none [color-scheme:dark]"
+                    onChange={setModalTimeTo}
+                    placeholder="10:00"
+                    buttonClassName="h-8 flex-1 border-0 bg-transparent px-0 text-sm shadow-none hover:bg-white/5 focus:ring-0"
                   />
                 </div>
 
@@ -1114,20 +1154,75 @@ export const PulseCalendar = ({
                 </div>
 
                 <div className="glass rounded-2xl p-2">
-                  <p className="px-2 pb-1 text-[11px] font-semibold uppercase text-muted-foreground">Space</p>
-                  <Select value={modalTeamId} onValueChange={setModalTeamId}>
-                    <SelectTrigger className="w-auto max-w-[calc(100%-0.5rem)] border-white/10 bg-[linear-gradient(180deg,hsl(220_12%_15%_/_0.98),hsl(220_12%_9%_/_0.98))] text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_12px_28px_-20px_rgba(0,0,0,0.95)]">
-                      <SelectValue placeholder="Personal" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="personal">Personal</SelectItem>
-                      {teams.map((team) => (
-                        <SelectItem key={team.id} value={team.id}>
-                          {team.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="mb-2 flex items-center justify-between gap-3 px-2">
+                    <p className="text-[11px] font-semibold uppercase text-muted-foreground">Space</p>
+                    <label className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-2.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                      <Checkbox
+                        checked={modalPriority}
+                        onCheckedChange={(checked) => {
+                          const next = checked === true;
+                          setModalPriority(next);
+                          setModalReminderLocked(false);
+                          if (next) {
+                            const { reminderDate, reminderTime } = getDefaultReminder(modalDate, modalTimeFrom);
+                            setModalReminderDate(reminderDate);
+                            setModalReminderTime(reminderTime);
+                            if ("Notification" in window && Notification.permission === "default") {
+                              void Notification.requestPermission();
+                            }
+                          } else {
+                            setModalReminderDate("");
+                            setModalReminderTime("");
+                          }
+                        }}
+                        className="border-white/20 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground"
+                      />
+                      Priority
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2 px-2">
+                    <Select value={modalTeamId} onValueChange={setModalTeamId}>
+                      <SelectTrigger className="w-[9.5rem] border-white/10 bg-[linear-gradient(180deg,hsl(220_12%_15%_/_0.98),hsl(220_12%_9%_/_0.98))] text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_12px_28px_-20px_rgba(0,0,0,0.95)]">
+                        <SelectValue placeholder="Personal" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="personal">Personal</SelectItem>
+                        {teams.map((team) => (
+                          <SelectItem key={team.id} value={team.id}>
+                            {team.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {modalPriority && (
+                    <div className="mt-3 space-y-2 px-2 pb-1">
+                      <p className="text-[11px] font-semibold uppercase text-muted-foreground">Reminder</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <DatePicker
+                          value={modalReminderDate}
+                          onChange={(value) => {
+                            setModalReminderLocked(true);
+                            setModalReminderDate(value);
+                          }}
+                          placeholder="Reminder date"
+                          buttonClassName="h-11 rounded-xl bg-background/50 px-3 text-xs"
+                        />
+                        <TimePicker
+                          value={modalReminderTime}
+                          onChange={(value) => {
+                            setModalReminderLocked(true);
+                            setModalReminderTime(value);
+                          }}
+                          placeholder="Reminder time"
+                          buttonClassName="h-11 rounded-xl bg-background/50 px-3 text-xs"
+                        />
+                      </div>
+                      <p className="text-[11px] leading-tight text-muted-foreground">
+                        Default reminder is 30 minutes before the event. Adjust the date and time for a custom reminder.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 <div className="grid grid-cols-3 gap-2">

@@ -95,6 +95,9 @@ export type WorkspaceEvent = {
   teamId?: string;
   assigneeEmail?: string;
   sourceChannelId?: string;
+  priority?: boolean;
+  reminderDate?: string;
+  reminderTime?: string;
 };
 
 export type DirectMessageThread = {

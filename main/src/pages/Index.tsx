@@ -5,6 +5,8 @@ import { SocialPanel } from "@/components/SocialPanel";
 import { NotificationsDock } from "@/components/NotificationsDock";
 import { useAuth } from "@/context/AuthContext";
 import { readNickname } from "@/lib/workspace-storage";
+import { toast } from "sonner";
+import { format, parseISO } from "date-fns";
 import {
   Channel,
   Team,
@@ -175,7 +177,6 @@ const Index = () => {
       return [];
     }
   });
-
   useEffect(() => {
     setUserDisplayName(readNickname(userEmail) || userEmail);
   }, [userEmail]);
@@ -203,6 +204,38 @@ const Index = () => {
   useEffect(() => {
     localStorage.setItem(DM_THREADS_KEY, JSON.stringify(directThreads));
   }, [directThreads]);
+
+  useEffect(() => {
+    const activeTimers: number[] = [];
+
+    const fireNotification = (event: WorkspaceEvent) => {
+      const teamName = event.teamId ? teams.find((team) => team.id === event.teamId)?.name : null;
+      const title = `Reminder: ${event.title}`;
+      const description = `${format(parseISO(event.date), "EEE, MMM d")}${event.timeFrom ? ` at ${event.timeFrom}` : ""}${teamName ? ` · ${teamName}` : ""}`;
+
+      toast.info(title, { description });
+
+      if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+        new Notification(title, { body: description });
+      }
+    };
+
+    events.forEach((event) => {
+      if (!event.priority || !event.reminderDate || !event.reminderTime) return;
+      const reminderTarget = new Date(`${event.reminderDate}T${event.reminderTime}:00`);
+      if (Number.isNaN(reminderTarget.getTime())) return;
+
+      const delay = reminderTarget.getTime() - Date.now();
+      if (delay <= 0) return;
+
+      const timerId = window.setTimeout(() => fireNotification(event), delay);
+      activeTimers.push(timerId);
+    });
+
+    return () => {
+      activeTimers.forEach((timerId) => window.clearTimeout(timerId));
+    };
+  }, [events, teams]);
 
   const activeTeam = useMemo(
     () => teams.find((team) => team.id === activeTeamId) ?? null,

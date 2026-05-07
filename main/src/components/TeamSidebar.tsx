@@ -16,7 +16,7 @@ import { format, parseISO, isAfter, startOfDay } from "date-fns";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { DatePicker } from "@/components/ui/date-picker";
+import { DatePicker, TimePicker } from "@/components/ui/date-picker";
 import { useAuth } from "@/context/AuthContext";
 import { SyncroLogo } from "@/components/SyncroLogo";
 import {
@@ -985,14 +985,12 @@ export const TeamSidebar = ({
                           placeholder="Pick a date"
                           buttonClassName="h-11 rounded-xl bg-background/50 px-3"
                         />
-                        <div className="flex h-11 items-center rounded-xl border border-white/10 bg-[linear-gradient(180deg,hsl(220_12%_14%_/_0.95),hsl(220_12%_10%_/_0.95))] px-3 text-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
-                          <input
-                            type="time"
-                            value={meetingTime}
-                            onChange={(e) => setMeetingTime(e.target.value)}
-                            className="w-full bg-transparent outline-none [color-scheme:dark]"
-                          />
-                        </div>
+                        <TimePicker
+                          value={meetingTime}
+                          onChange={setMeetingTime}
+                          placeholder="Pick a time"
+                          buttonClassName="h-11 rounded-xl bg-background/50 px-3"
+                        />
                       </div>
                       <input
                         type="number"

@@ -6,12 +6,19 @@ import Placeholder from "@tiptap/extension-placeholder";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { SlashCommand, SlashRange } from "@/lib/tiptap/slash-command";
+import { MentionCommand, MentionRange } from "@/lib/tiptap/mention-command";
 
 type CommandItem = {
   id: string;
   label: string;
   description: string;
   run: () => void;
+};
+
+type MentionItem = {
+  id: string;
+  label: string;
+  handle: string;
 };
 
 type SubmitPayload = {
@@ -27,6 +34,7 @@ type ChatInputEditorProps = {
   onSubmit: (payload: SubmitPayload) => void | Promise<void>;
   onRegisterSubmit?: (submit: () => void) => void;
   className?: string;
+  mentionItems?: MentionItem[];
 };
 
 export const ChatInputEditor = ({
@@ -36,11 +44,16 @@ export const ChatInputEditor = ({
   onSubmit,
   onRegisterSubmit,
   className,
+  mentionItems = [],
 }: ChatInputEditorProps) => {
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState("");
   const [slashRange, setSlashRange] = useState<SlashRange | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionRange, setMentionRange] = useState<MentionRange | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
 
   const editor = useEditor({
     extensions: [
@@ -79,6 +92,35 @@ export const ChatInputEditor = ({
           // Handled below using selected command and clamped index.
         },
       }),
+      MentionCommand.configure({
+        onOpen: ({ query, range }) => {
+          setMentionOpen(true);
+          setMentionQuery(query);
+          setMentionRange(range);
+          setMentionIndex(0);
+        },
+        onQueryChange: ({ query, range }) => {
+          setMentionOpen(true);
+          setMentionQuery(query);
+          setMentionRange(range);
+          setMentionIndex(0);
+        },
+        onClose: () => {
+          setMentionOpen(false);
+          setMentionQuery("");
+          setMentionRange(null);
+          setMentionIndex(0);
+        },
+        onNavigate: (direction) => {
+          setMentionIndex((prev) => {
+            const next = direction === "down" ? prev + 1 : prev - 1;
+            return next;
+          });
+        },
+        onSelect: () => {
+          // Handled below using selected teammate and clamped index.
+        },
+      }),
     ],
     content: valueHtml || "",
     editorProps: {
@@ -87,7 +129,7 @@ export const ChatInputEditor = ({
           "max-h-56 min-h-[3rem] overflow-y-auto whitespace-pre-wrap break-words rounded-xl border border-border/60 bg-background/30 px-3 py-2 text-sm outline-none focus:border-primary/50",
       },
       handleKeyDown: (_view, event) => {
-        if (slashOpen && event.key === "Enter") {
+        if ((slashOpen || mentionOpen) && event.key === "Enter") {
           event.preventDefault();
           return true;
         }
@@ -105,6 +147,10 @@ export const ChatInputEditor = ({
           setSlashQuery("");
           setSlashRange(null);
           setSlashIndex(0);
+          setMentionOpen(false);
+          setMentionQuery("");
+          setMentionRange(null);
+          setMentionIndex(0);
           return true;
         }
 
@@ -181,11 +227,28 @@ export const ChatInputEditor = ({
     );
   }, [commandItems, slashQuery]);
 
+  const filteredMentions = useMemo(() => {
+    const query = mentionQuery.trim().toLowerCase();
+    if (!query) return mentionItems;
+    return mentionItems.filter(
+      (item) =>
+        item.label.toLowerCase().includes(query) ||
+        item.handle.toLowerCase().includes(query) ||
+        item.id.toLowerCase().includes(query)
+    );
+  }, [mentionItems, mentionQuery]);
+
   const activeSlashIndex = useMemo(() => {
     if (filteredCommands.length === 0) return 0;
     const normalized = slashIndex % filteredCommands.length;
     return normalized < 0 ? filteredCommands.length + normalized : normalized;
   }, [filteredCommands.length, slashIndex]);
+
+  const activeMentionIndex = useMemo(() => {
+    if (filteredMentions.length === 0) return 0;
+    const normalized = mentionIndex % filteredMentions.length;
+    return normalized < 0 ? filteredMentions.length + normalized : normalized;
+  }, [filteredMentions.length, mentionIndex]);
 
   const submitNow = () => {
     if (!editor) return;
@@ -226,6 +289,19 @@ export const ChatInputEditor = ({
     }
   }, [editor, slashOpen, slashRange]);
 
+  const mentionCoordinates = useMemo(() => {
+    if (!editor || !mentionRange || !mentionOpen) return null;
+    try {
+      const coords = editor.view.coordsAtPos(mentionRange.from);
+      return {
+        left: coords.left,
+        top: coords.bottom + 8,
+      };
+    } catch {
+      return null;
+    }
+  }, [editor, mentionOpen, mentionRange]);
+
   const executeSlashCommand = (item: CommandItem | undefined) => {
     if (!editor || !item || !slashRange) return;
 
@@ -242,31 +318,68 @@ export const ChatInputEditor = ({
     setSlashIndex(0);
   };
 
+  const executeMentionCommand = (item: MentionItem | undefined) => {
+    if (!editor || !item || !mentionRange) return;
+
+    editor
+      .chain()
+      .focus()
+      .deleteRange({ from: mentionRange.from, to: mentionRange.to })
+      .insertContent(`@${item.handle} `)
+      .run();
+
+    setMentionOpen(false);
+    setMentionQuery("");
+    setMentionRange(null);
+    setMentionIndex(0);
+  };
+
   useEffect(() => {
-    if (!slashOpen || !editor) return;
+    if (!editor || (!slashOpen && !mentionOpen)) return;
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "ArrowDown") {
+      if (slashOpen && event.key === "ArrowDown") {
         event.preventDefault();
         setSlashIndex((prev) => prev + 1);
-      } else if (event.key === "ArrowUp") {
+      } else if (slashOpen && event.key === "ArrowUp") {
         event.preventDefault();
         setSlashIndex((prev) => prev - 1);
-      } else if (event.key === "Enter") {
+      } else if (slashOpen && event.key === "Enter") {
         event.preventDefault();
         executeSlashCommand(filteredCommands[activeSlashIndex]);
+      } else if (mentionOpen && event.key === "ArrowDown") {
+        event.preventDefault();
+        setMentionIndex((prev) => prev + 1);
+      } else if (mentionOpen && event.key === "ArrowUp") {
+        event.preventDefault();
+        setMentionIndex((prev) => prev - 1);
+      } else if (mentionOpen && event.key === "Enter") {
+        event.preventDefault();
+        executeMentionCommand(filteredMentions[activeMentionIndex]);
       } else if (event.key === "Escape") {
         event.preventDefault();
         setSlashOpen(false);
         setSlashQuery("");
         setSlashRange(null);
         setSlashIndex(0);
+        setMentionOpen(false);
+        setMentionQuery("");
+        setMentionRange(null);
+        setMentionIndex(0);
       }
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [slashOpen, filteredCommands, activeSlashIndex, editor]);
+  }, [
+    slashOpen,
+    mentionOpen,
+    filteredCommands,
+    activeSlashIndex,
+    filteredMentions,
+    activeMentionIndex,
+    editor,
+  ]);
 
   if (!editor) return null;
 
@@ -360,6 +473,37 @@ export const ChatInputEditor = ({
                 >
                   <span className="text-sm font-medium">{command.label}</span>
                   <span className="text-muted-foreground text-xs">{command.description}</span>
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {mentionOpen && mentionCoordinates && filteredMentions.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.98 }}
+            transition={{ type: "spring", stiffness: 320, damping: 28 }}
+            style={{ left: mentionCoordinates.left, top: mentionCoordinates.top }}
+            className="border-border/70 bg-card/90 fixed z-[70] w-72 rounded-xl border p-1.5 shadow-xl backdrop-blur-md"
+          >
+            <div className="max-h-56 overflow-y-auto">
+              {filteredMentions.map((mention, index) => (
+                <button
+                  key={mention.id}
+                  onClick={() => executeMentionCommand(mention)}
+                  className={cn(
+                    "flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left transition-colors",
+                    index === activeMentionIndex ? "bg-primary/15" : "hover:bg-muted/70"
+                  )}
+                >
+                  <span className="flex flex-col gap-0.5">
+                    <span className="text-sm font-medium">{mention.label}</span>
+                    <span className="text-muted-foreground text-xs">@{mention.handle}</span>
+                  </span>
                 </button>
               ))}
             </div>

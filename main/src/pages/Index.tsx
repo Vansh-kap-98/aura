@@ -126,6 +126,12 @@ const normalizeDirectThread = (
   ),
 });
 
+type MentionNavigationTarget = {
+  teamId: string;
+  channelId: string;
+  messageId: string;
+};
+
 const Index = () => {
   const { user } = useAuth();
   const userEmail = user?.email ?? "demo@syncro.app";
@@ -177,6 +183,7 @@ const Index = () => {
       return [];
     }
   });
+  const [messageNavigationTarget, setMessageNavigationTarget] = useState<MentionNavigationTarget | null>(null);
   useEffect(() => {
     setUserDisplayName(readNickname(userEmail) || userEmail);
   }, [userEmail]);
@@ -325,6 +332,18 @@ const Index = () => {
     });
   };
 
+  const navigateToMention = (target: MentionNavigationTarget) => {
+    setOpenTextChannels((prev) => {
+      const exists = prev.some(
+        (entry) => entry.teamId === target.teamId && entry.channelId === target.channelId
+      );
+      if (exists) return prev;
+      return [...prev, { teamId: target.teamId, channelId: target.channelId }];
+    });
+    setActiveTeamId(target.teamId);
+    setMessageNavigationTarget(target);
+  };
+
   return (
     <>
       <div className="flex h-screen w-full overflow-hidden">
@@ -354,6 +373,8 @@ const Index = () => {
           setDirectThreads={setDirectThreads}
           userEmail={userEmail}
           userDisplayName={userDisplayName}
+          focusMessageTarget={messageNavigationTarget}
+          onFocusMessageHandled={() => setMessageNavigationTarget(null)}
         />
         <SocialPanel
           activeTeam={activeTeam}
@@ -362,7 +383,12 @@ const Index = () => {
           userDisplayName={userDisplayName}
         />
       </div>
-      <NotificationsDock events={events} teams={teams} />
+      <NotificationsDock
+        events={events}
+        teams={teams}
+        userEmail={userEmail}
+        onMentionNavigate={navigateToMention}
+      />
     </>
   );
 };

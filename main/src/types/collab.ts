@@ -94,6 +94,7 @@ export type WorkspaceEvent = {
   scope: EventScope;
   teamId?: string;
   assigneeEmail?: string;
+  taggedEmail?: string;
   sourceChannelId?: string;
   priority?: boolean;
   reminderDate?: string;

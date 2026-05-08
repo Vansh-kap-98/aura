@@ -33,6 +33,7 @@ import { DatePicker, TimePicker } from "@/components/ui/date-picker";
 import { Checkbox } from "@/components/ui/checkbox";
 import { ChatMessage, DirectMessageThread, Team, WorkspaceEvent, WorkspaceEventType } from "@/types/collab";
 import { ChatInputEditor } from "@/components/ChatInputEditor";
+import { toast } from "sonner";
 
 type PulseCalendarProps = {
   events: WorkspaceEvent[];
@@ -48,6 +49,12 @@ type PulseCalendarProps = {
   setDirectThreads: Dispatch<SetStateAction<DirectMessageThread[]>>;
   userEmail: string;
   userDisplayName: string;
+  focusMessageTarget?: {
+    teamId: string;
+    channelId: string;
+    messageId: string;
+  } | null;
+  onFocusMessageHandled?: () => void;
 };
 
 type ChatWindowLayout = {
@@ -171,6 +178,14 @@ const buildGrid = (monthStart: Date): Date[] => {
 
 const toKey = (d: Date) => format(d, "yyyy-MM-dd");
 const todayKey = () => toKey(new Date());
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const getMentionHandle = (value: string) =>
+  value
+    .trim()
+    .split("@")[0]
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, "");
 
 export const PulseCalendar = ({
   events,
@@ -186,6 +201,8 @@ export const PulseCalendar = ({
   setDirectThreads,
   userEmail,
   userDisplayName,
+  focusMessageTarget,
+  onFocusMessageHandled,
 }: PulseCalendarProps) => {
   const [currentMonth, setCurrentMonth] = useState(() => startOfMonth(new Date()));
 
@@ -207,6 +224,7 @@ export const PulseCalendar = ({
   const [modalReminderDate, setModalReminderDate] = useState("");
   const [modalReminderTime, setModalReminderTime] = useState("");
   const [modalReminderLocked, setModalReminderLocked] = useState(false);
+  const [modalTaggedEmail, setModalTaggedEmail] = useState("");
   const [memberFilter, setMemberFilter] = useState<string>("all");
   const [deadlinePreviewDate, setDeadlinePreviewDate] = useState<string | null>(null);
 
@@ -222,6 +240,7 @@ export const PulseCalendar = ({
   } | null>(null);
 
   const editRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const submitEditorRefs = useRef<Record<string, () => void>>({});
   const resizeRef = useRef<{
     key: string;
@@ -259,6 +278,55 @@ export const PulseCalendar = ({
     return Array.from(emails).sort((a, b) => a.localeCompare(b));
   }, [teams, userEmail, visibleTeamIds]);
 
+  const allTeamMembers = useMemo(() => {
+    const emails = new Set<string>([userEmail]);
+
+    teams.forEach((team) => {
+      emails.add(team.leaderEmail);
+      team.channels.forEach((channel) => {
+        channel.messages.forEach((message) => {
+          if (message.authorEmail) emails.add(message.authorEmail);
+        });
+        (channel.settings.hidden?.allowedEmails ?? []).forEach((email) => emails.add(email));
+      });
+    });
+
+    directThreads.forEach((thread) => {
+      emails.add(thread.memberEmail);
+      if (thread.memberName) {
+        emails.add(thread.memberName);
+      }
+    });
+
+    if (userEmail === "demo@syncro.app") {
+      emails.add("teammate.demo@syncro.app");
+    }
+
+    return Array.from(emails).sort((a, b) => a.localeCompare(b));
+  }, [directThreads, teams, userEmail]);
+
+  const mentionItems = useMemo(
+    () => {
+      const seen = new Set<string>();
+
+      return allTeamMembers
+        .map((member) => {
+          const handle = getMentionHandle(member);
+          return {
+            id: member,
+            label: member.includes("@") ? member.split("@")[0] : member,
+            handle,
+          };
+        })
+        .filter((item) => {
+          if (!item.handle || seen.has(item.handle)) return false;
+          seen.add(item.handle);
+          return true;
+        });
+    },
+    [allTeamMembers]
+  );
+
   const visibleEvents = useMemo(() => {
     return events.filter((event) => {
       const isPersonal = !event.teamId || event.scope === "personal";
@@ -286,7 +354,8 @@ export const PulseCalendar = ({
     timeFrom: string,
     timeTo: string,
     teamId?: string,
-    reminder?: { priority: boolean; reminderDate?: string; reminderTime?: string }
+    reminder?: { priority: boolean; reminderDate?: string; reminderTime?: string },
+    taggedEmail?: string
   ) => {
     const priority = reminder?.priority ?? false;
     const defaultReminder = getDefaultReminder(date, timeFrom);
@@ -306,6 +375,7 @@ export const PulseCalendar = ({
         scope: teamId ? "space" : "personal",
         teamId,
         assigneeEmail: userEmail,
+        taggedEmail: taggedEmail || undefined,
         priority,
         reminderDate,
         reminderTime,
@@ -337,7 +407,8 @@ export const PulseCalendar = ({
       modalTeamId === "personal" ? undefined : modalTeamId,
       modalPriority
         ? { priority: true, reminderDate: modalReminderDate, reminderTime: modalReminderTime }
-        : { priority: false }
+        : { priority: false },
+      modalTaggedEmail || undefined
     );
     setModalTitle("");
     setModalDate(todayKey());
@@ -347,6 +418,7 @@ export const PulseCalendar = ({
     setModalReminderDate("");
     setModalReminderTime("");
     setModalReminderLocked(false);
+    setModalTaggedEmail("");
     setShowModal(false);
   };
 
@@ -363,6 +435,7 @@ export const PulseCalendar = ({
     setModalReminderDate("");
     setModalReminderTime("");
     setModalReminderLocked(false);
+    setModalTaggedEmail("");
     setShowModal(true);
   };
 
@@ -418,6 +491,18 @@ export const PulseCalendar = ({
       editor.innerHTML = editingMessage.html;
     }
   }, [editingMessage]);
+
+  useEffect(() => {
+    if (!focusMessageTarget) return;
+
+    const targetKey = `${focusMessageTarget.teamId}:${focusMessageTarget.channelId}:${focusMessageTarget.messageId}`;
+    const targetNode = messageRefs.current[targetKey];
+
+    if (!targetNode) return;
+
+    targetNode.scrollIntoView({ behavior: "smooth", block: "center" });
+    onFocusMessageHandled?.();
+  }, [focusMessageTarget, onFocusMessageHandled, openChats]);
 
   const runEditCommand = (messageId: string, command: string, value?: string) => {
     const editor = editRefs.current[messageId];
@@ -590,6 +675,9 @@ export const PulseCalendar = ({
       media,
     };
 
+    const selfHandle = getMentionHandle(userEmail);
+    const selfMentioned = new RegExp(`@${escapeRegExp(selfHandle)}\\b`, "i").test(plainText);
+
     if (teamId === "__dm__") {
       setDirectThreads((prev) =>
         prev.map((thread) =>
@@ -619,6 +707,24 @@ export const PulseCalendar = ({
               }
         )
       );
+    }
+
+    if (selfMentioned) {
+      const teamName = teamId === "__dm__" ? "Direct message" : teams.find((team) => team.id === teamId)?.name ?? "Space";
+      const title = `Mentioned in ${teamName}`;
+      const description = `${userDisplayName} mentioned @${selfHandle}`;
+      toast.info(title, { description });
+
+      if (typeof window !== "undefined" && "Notification" in window) {
+        if (Notification.permission === "default") {
+          const permission = await Notification.requestPermission();
+          if (permission === "granted") {
+            new Notification(title, { body: description });
+          }
+        } else if (Notification.permission === "granted") {
+          new Notification(title, { body: description });
+        }
+      }
     }
 
     setDrafts((prev) => ({ ...prev, [channelId]: "" }));
@@ -881,7 +987,6 @@ export const PulseCalendar = ({
                 onDoubleClick={() => setDeadlinePreviewDate(dateKey)}
                 className={cn(
                   "group relative flex cursor-pointer flex-col gap-0.5 rounded-2xl p-2 transition-all",
-                  !inMonth && "opacity-25",
                   hasMeetingReminder && "ring-1 ring-amber-400/80",
                   isSelected ? "bg-primary/5 ring-2 ring-primary/30" : "hover:bg-muted/50"
                 )}
@@ -892,7 +997,9 @@ export const PulseCalendar = ({
                       "grid h-6 w-6 place-items-center rounded-full text-xs font-medium",
                       today
                         ? "bg-primary text-primary-foreground shadow-glow font-semibold"
-                        : "text-foreground"
+                        : inMonth
+                          ? "text-foreground"
+                          : "text-muted-foreground/65"
                     )}
                   >
                     {format(day, "d")}
@@ -1194,6 +1301,22 @@ export const PulseCalendar = ({
                         ))}
                       </SelectContent>
                     </Select>
+                    <Select
+                      value={modalTaggedEmail}
+                      onValueChange={(value) => setModalTaggedEmail(value === "__none__" ? "" : value)}
+                    >
+                      <SelectTrigger className="w-[9.5rem] border-white/10 bg-[linear-gradient(180deg,hsl(220_12%_15%_/_0.98),hsl(220_12%_9%_/_0.98))] text-xs shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_12px_28px_-20px_rgba(0,0,0,0.95)]">
+                        <SelectValue placeholder="@ somebody" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__none__">No tag</SelectItem>
+                        {allTeamMembers.map((member) => (
+                          <SelectItem key={member} value={member}>
+                            @ {member}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   {modalPriority && (
                     <div className="mt-3 space-y-2 px-2 pb-1">
@@ -1372,9 +1495,16 @@ export const PulseCalendar = ({
                 const shouldBeGold = isLeaderMessage && isImportant;
                 const isEditing = editingMessage?.messageId === msg.id;
                 const displayName = msg.authorName || msg.author || msg.authorEmail;
+                const messageKey = `${entry.teamId}:${entry.channelId}:${msg.id}`;
 
                 return (
-                  <div key={msg.id} className={cn("group flex", isUserMessage ? "justify-end" : "justify-start")}>
+                  <div
+                    key={msg.id}
+                    ref={(node) => {
+                      messageRefs.current[messageKey] = node;
+                    }}
+                    className={cn("group flex", isUserMessage ? "justify-end" : "justify-start")}
+                  >
                     <div
                       className={cn(
                         "w-full max-w-xs rounded-xl px-2.5 py-2 text-xs",
@@ -1581,6 +1711,7 @@ export const PulseCalendar = ({
               <ChatInputEditor
                 valueHtml={draft}
                 placeholder="Type a message..."
+                mentionItems={mentionItems}
                 onChangeHtml={(html) =>
                   setDrafts((prev) => ({
                     ...prev,

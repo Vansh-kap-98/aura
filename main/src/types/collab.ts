@@ -107,3 +107,16 @@ export type DirectMessageThread = {
   memberName: string;
   messages: ChatMessage[];
 };
+
+export type WeeklyMomentum = {
+  weekStart: string;
+  meetingsAttended: number;
+  totalMeetings: number;
+  feedbackPending: Array<{
+    eventId: string;
+    eventTitle: string;
+    eventDate: string;
+    eventTimeFrom?: string;
+    eventTimeTo?: string;
+  }>;
+};

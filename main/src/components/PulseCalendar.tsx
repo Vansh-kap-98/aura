@@ -1055,7 +1055,7 @@ export const PulseCalendar = ({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 6 }}
             transition={{ duration: 0.18 }}
-            className="glass shadow-soft flex items-center gap-3 rounded-2xl px-4 py-3"
+            className="glass shadow-soft box-border flex max-w-full items-center gap-3 rounded-2xl px-4 py-3"
           >
             <div className="flex shrink-0 items-center gap-1.5">
               {EVENT_TYPES.map((t) => (
@@ -1083,25 +1083,29 @@ export const PulseCalendar = ({
                 if (e.key === "Escape") setSelectedDate(null);
               }}
               placeholder={`Add to ${format(parseISO(selectedDate), "MMM d")}...`}
-              className="placeholder:text-muted-foreground/60 flex-1 bg-transparent text-sm outline-none"
+              className="placeholder:text-muted-foreground/60 min-w-0 grow shrink bg-transparent text-sm outline-none"
             />
 
             <div className="flex items-center gap-1 rounded-xl border border-white/10 bg-black/90 px-2 py-1 text-white shadow-[0_0_18px_rgba(255,255,255,0.06)] transition-transform focus-within:scale-[1.01] focus-within:border-white/30">
               <Clock className="h-3.5 w-3.5 text-white/70" />
-              <span className="text-[10px] font-semibold tracking-[0.18em] text-white/55">FROM</span>
-              <TimePicker
-                value={quickTimeFrom}
-                onChange={setQuickTimeFrom}
-                placeholder="09:00"
-                buttonClassName="h-8 w-[5.4rem] border-0 bg-transparent px-0 text-xs shadow-none hover:bg-white/5 focus:ring-0"
-              />
-              <span className="text-[10px] font-semibold tracking-[0.18em] text-white/55">TO</span>
-              <TimePicker
-                value={quickTimeTo}
-                onChange={setQuickTimeTo}
-                placeholder="10:00"
-                buttonClassName="h-8 w-[5.4rem] border-0 bg-transparent px-0 text-xs shadow-none hover:bg-white/5 focus:ring-0"
-              />
+              <div className="flex shrink-0 items-center gap-1 min-w-[6.5rem]">
+                <span className="text-[10px] font-semibold tracking-[0.18em] text-white/55">FROM</span>
+                <TimePicker
+                  value={quickTimeFrom}
+                  onChange={setQuickTimeFrom}
+                  placeholder="09:00"
+                  buttonClassName="h-8 min-w-[4.8rem] border-0 bg-transparent px-0 text-xs shadow-none hover:bg-white/5 focus:ring-0"
+                />
+              </div>
+              <div className="flex shrink-0 items-center gap-1 min-w-[6.5rem]">
+                <span className="text-[10px] font-semibold tracking-[0.18em] text-white/55">TO</span>
+                <TimePicker
+                  value={quickTimeTo}
+                  onChange={setQuickTimeTo}
+                  placeholder="10:00"
+                  buttonClassName="h-8 min-w-[4.8rem] border-0 bg-transparent px-0 text-xs shadow-none hover:bg-white/5 focus:ring-0"
+                />
+              </div>
             </div>
 
             <Select value={quickTeamId} onValueChange={setQuickTeamId}>

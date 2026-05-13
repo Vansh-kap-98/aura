@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bell, CalendarClock, AlertTriangle, Trash2, X } from "lucide-react";
+import { Bell, CalendarClock, AlertTriangle, Trash2, X, Check, XCircle } from "lucide-react";
 import { format, parseISO, isAfter, startOfDay } from "date-fns";
 import { cn } from "@/lib/utils";
 import { Team, WorkspaceEvent } from "@/types/collab";
@@ -10,13 +10,21 @@ type NotificationsDockProps = {
   teams: Team[];
   userEmail: string;
   onMentionNavigate?: (target: { teamId: string; channelId: string; messageId: string }) => void;
+  feedbackPending?: Array<{
+    eventId: string;
+    eventTitle: string;
+    eventDate: string;
+    eventTimeFrom?: string;
+    eventTimeTo?: string;
+  }>;
+  onMeetingFeedback?: (eventId: string, attended: boolean) => void;
 };
 
 type AlertItem = {
   id: string;
   title: string;
   subtitle: string;
-  kind: "event" | "clash" | "mention";
+  kind: "event" | "clash" | "mention" | "feedback";
   groupKey: string;
   groupLabel: string;
   when?: string;
@@ -25,6 +33,7 @@ type AlertItem = {
     channelId: string;
     messageId: string;
   };
+  feedbackEventId?: string;
 };
 
 const getEventRange = (event: WorkspaceEvent) => {
@@ -80,6 +89,8 @@ export const NotificationsDock = ({
   teams,
   userEmail,
   onMentionNavigate,
+  feedbackPending = [],
+  onMeetingFeedback,
 }: NotificationsDockProps) => {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"personal" | "space">("personal");
@@ -209,8 +220,19 @@ export const NotificationsDock = ({
         groupLabel: "Mentions",
       }));
 
-    return [...clashAlerts, ...scheduleAlerts, ...mentionAlerts];
-  }, [clashAlerts, personalScheduleEvents, taggedEvents, teams]);
+    const feedbackAlerts = feedbackPending.map((feedback) => ({
+      id: `feedback:${feedback.eventId}`,
+      title: "How did it go?",
+      subtitle: `${feedback.eventTitle}${feedback.eventTimeFrom ? ` · ${feedback.eventTimeFrom}` : ""}`,
+      when: format(parseISO(feedback.eventDate), "EEE, MMM d"),
+      kind: "feedback" as const,
+      groupKey: "feedback",
+      groupLabel: "Meeting Feedback",
+      feedbackEventId: feedback.eventId,
+    }));
+
+    return [...clashAlerts, ...scheduleAlerts, ...mentionAlerts, ...feedbackAlerts];
+  }, [clashAlerts, personalScheduleEvents, taggedEvents, teams, feedbackPending]);
 
   const spaceAlerts = useMemo<AlertItem[]>(() => {
     const eventAlerts: AlertItem[] = spaceEvents.map((event) => ({
@@ -377,6 +399,8 @@ export const NotificationsDock = ({
                                   <AlertTriangle className="mt-0.5 h-3.5 w-3.5 text-rose-400" />
                                 ) : alert.kind === "mention" ? (
                                   <span className="mt-0.5 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary">@</span>
+                                ) : alert.kind === "feedback" ? (
+                                  <span className="mt-0.5 rounded-full bg-sky-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-400">✓</span>
                                 ) : (
                                   <CalendarClock className="mt-0.5 h-3.5 w-3.5 text-muted-foreground" />
                                 )}
@@ -392,8 +416,39 @@ export const NotificationsDock = ({
                               </div>
                             </button>
 
+                            {alert.kind === "feedback" && alert.feedbackEventId && (
+                              <div className="mt-3 flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onMeetingFeedback?.(alert.feedbackEventId!, true);
+                                    setDismissedAlertIds((prev) =>
+                                      prev.includes(alert.id) ? prev : [...prev, alert.id]
+                                    );
+                                  }}
+                                  className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-emerald-500/20 px-3 py-2 text-xs font-semibold text-emerald-400 hover:bg-emerald-500/30 transition-colors"
+                                >
+                                  <Check className="h-3.5 w-3.5" />
+                                  Completed
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    onMeetingFeedback?.(alert.feedbackEventId!, false);
+                                    setDismissedAlertIds((prev) =>
+                                      prev.includes(alert.id) ? prev : [...prev, alert.id]
+                                    );
+                                  }}
+                                  className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-rose-500/20 px-3 py-2 text-xs font-semibold text-rose-400 hover:bg-rose-500/30 transition-colors"
+                                >
+                                  <XCircle className="h-3.5 w-3.5" />
+                                  Missed
+                                </button>
+                              </div>
+                            )}
+
                             <AnimatePresence>
-                              {pendingDeleteAlertId === alert.id && (
+                              {pendingDeleteAlertId === alert.id && alert.kind !== "feedback" && (
                                 <motion.div
                                   initial={{ opacity: 0, y: 6 }}
                                   animate={{ opacity: 1, y: 0 }}
@@ -424,17 +479,19 @@ export const NotificationsDock = ({
                             </AnimatePresence>
                           </div>
 
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              deleteAlert(alert);
-                            }}
-                            className="absolute bottom-2 right-2 rounded-lg border border-border/60 bg-background/70 p-1.5 text-muted-foreground shadow-sm transition-colors hover:text-foreground"
-                            aria-label="Delete alert"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                          {alert.kind !== "feedback" && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                deleteAlert(alert);
+                              }}
+                              className="absolute bottom-2 right-2 rounded-lg border border-border/60 bg-background/70 p-1.5 text-muted-foreground shadow-sm transition-colors hover:text-foreground"
+                              aria-label="Delete alert"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </motion.div>
                       );
                     })}

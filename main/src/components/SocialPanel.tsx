@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { Team } from "@/types/collab";
+import { Team, WeeklyMomentum } from "@/types/collab";
 
 // Derive a consistent gradient from an email string
 const getColorFromEmail = (email: string): string => {
@@ -47,6 +47,7 @@ type SocialPanelProps = {
   onOpenDirectMessage: (memberEmail: string, memberName?: string) => void;
   userEmail: string;
   userDisplayName: string;
+  momentum?: WeeklyMomentum;
 };
 
 const sanitizeChannel = (name: string) =>
@@ -64,6 +65,7 @@ export const SocialPanel = ({
   onOpenDirectMessage,
   userEmail,
   userDisplayName,
+  momentum,
 }: SocialPanelProps) => {
   const [copied, setCopied] = useState(false);
   const [showSyncModal, setShowSyncModal] = useState(false);
@@ -72,6 +74,22 @@ export const SocialPanel = ({
   const displayName = userDisplayName || email;
   const initials = getInitials(displayName);
   const color = getColorFromEmail(email);
+
+  const momentumRatio = useMemo(() => {
+    if (!momentum || momentum.totalMeetings === 0) return 0;
+    return momentum.meetingsAttended / momentum.totalMeetings;
+  }, [momentum]);
+
+  const dynamicVibeBar = useMemo(() => {
+    const baseBar = [40, 55, 35, 60, 75, 50, 85, 90, 70, 95, 80, 88];
+    const ratio = momentumRatio;
+    return baseBar.map((height, i) => {
+      if (i === baseBar.length - 1) {
+        return Math.round(height * (0.5 + ratio * 0.5));
+      }
+      return height;
+    });
+  }, [momentumRatio]);
 
   const onlinePeers = useMemo(() => {
     if (!activeTeam) return [] as Array<{ email: string; isLeader: boolean }>;
@@ -149,7 +167,7 @@ export const SocialPanel = ({
           <span className="text-success text-xs font-semibold">This week</span>
         </div>
         <div className="flex h-12 items-end gap-1">
-          {VIBE_BARS.map((h, i) => (
+          {dynamicVibeBar.map((h, i) => (
             <motion.div
               key={i}
               initial={{ height: 0 }}
@@ -157,13 +175,19 @@ export const SocialPanel = ({
               transition={{ delay: i * 0.04, type: "spring", stiffness: 100 }}
               className={cn(
                 "flex-1 rounded-full bg-gradient-to-t",
-                i === VIBE_BARS.length - 1
+                i === dynamicVibeBar.length - 1
                   ? "from-primary to-primary-glow shadow-glow"
                   : "from-muted-foreground/30 to-muted-foreground/10"
               )}
             />
           ))}
         </div>
+        {momentum && (
+          <div className="mt-2 text-center text-xs text-muted-foreground">
+            {momentum.meetingsAttended} / {momentum.totalMeetings} meetings
+            {momentumRatio > 0 && ` • ${Math.round(momentumRatio * 100)}%`}
+          </div>
+        )}
       </div>
 
       {/* ── Online now ── */}

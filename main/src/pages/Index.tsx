@@ -13,6 +13,7 @@ import {
   WorkspaceEvent,
   ChatMessage,
   DirectMessageThread,
+  WeeklyMomentum,
 } from "@/types/collab";
 
 const TEAMS_KEY = "mesh_teams";
@@ -20,8 +21,17 @@ const ACTIVE_KEY = "mesh_active_team";
 const EVENTS_KEY = "mesh_calendar_events";
 const CALENDAR_SPACES_KEY = "mesh_calendar_selected_spaces";
 const DM_THREADS_KEY = "mesh_direct_threads";
+const MOMENTUM_KEY = "mesh_weekly_momentum";
 const DEMO_MEMBER_EMAIL = "teammate.demo@syncro.app";
 const DEMO_AUTO_REPLY = "hi";
+
+const getWeekStart = (): string => {
+  const today = new Date();
+  const dayOfWeek = today.getDay();
+  const diff = today.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+  const monday = new Date(today.setDate(diff));
+  return format(monday, "yyyy-MM-dd");
+};
 
 const createDefaultChannel = (name: string): Channel => ({
   id: crypto.randomUUID(),
@@ -184,6 +194,19 @@ const Index = () => {
     }
   });
   const [messageNavigationTarget, setMessageNavigationTarget] = useState<MentionNavigationTarget | null>(null);
+  const [momentum, setMomentum] = useState<WeeklyMomentum>(() => {
+    try {
+      const weekStart = getWeekStart();
+      const parsed = JSON.parse(localStorage.getItem(MOMENTUM_KEY) || "null") as WeeklyMomentum | null;
+      if (parsed && parsed.weekStart === weekStart) {
+        return parsed;
+      }
+      return { weekStart, meetingsAttended: 0, totalMeetings: 0, feedbackPending: [] };
+    } catch {
+      return { weekStart: getWeekStart(), meetingsAttended: 0, totalMeetings: 0, feedbackPending: [] };
+    }
+  });
+
   useEffect(() => {
     setUserDisplayName(readNickname(userEmail) || userEmail);
   }, [userEmail]);
@@ -211,6 +234,57 @@ const Index = () => {
   useEffect(() => {
     localStorage.setItem(DM_THREADS_KEY, JSON.stringify(directThreads));
   }, [directThreads]);
+
+  useEffect(() => {
+    localStorage.setItem(MOMENTUM_KEY, JSON.stringify(momentum));
+  }, [momentum]);
+
+  useEffect(() => {
+    const activeTimers: number[] = [];
+    const meetingFeedbackTimers: number[] = [];
+
+    const addMeetingFeedback = (event: WorkspaceEvent) => {
+      setMomentum((prev) => {
+        const alreadyPending = prev.feedbackPending.some((f) => f.eventId === event.id);
+        if (alreadyPending) return prev;
+        return {
+          ...prev,
+          feedbackPending: [
+            ...prev.feedbackPending,
+            {
+              eventId: event.id,
+              eventTitle: event.title,
+              eventDate: event.date,
+              eventTimeFrom: event.timeFrom,
+              eventTimeTo: event.timeTo,
+            },
+          ],
+        };
+      });
+    };
+
+    events.forEach((event) => {
+      if (event.type !== "meeting") return;
+      if (!event.date || !event.timeTo) return;
+
+      const endTime = new Date(`${event.date}T${event.timeTo}:00`);
+      if (Number.isNaN(endTime.getTime())) return;
+
+      const feedbackTrigger = new Date(endTime.getTime() + 60 * 1000);
+      const delay = feedbackTrigger.getTime() - Date.now();
+
+      if (delay <= 0) {
+        addMeetingFeedback(event);
+      } else {
+        const timerId = window.setTimeout(() => addMeetingFeedback(event), delay);
+        meetingFeedbackTimers.push(timerId);
+      }
+    });
+
+    return () => {
+      meetingFeedbackTimers.forEach((timerId) => window.clearTimeout(timerId));
+    };
+  }, [events]);
 
   useEffect(() => {
     const activeTimers: number[] = [];
@@ -344,6 +418,15 @@ const Index = () => {
     setMessageNavigationTarget(target);
   };
 
+  const handleMeetingFeedback = (eventId: string, attended: boolean) => {
+    setMomentum((prev) => ({
+      ...prev,
+      meetingsAttended: attended ? prev.meetingsAttended + 1 : prev.meetingsAttended,
+      totalMeetings: prev.totalMeetings + 1,
+      feedbackPending: prev.feedbackPending.filter((f) => f.eventId !== eventId),
+    }));
+  };
+
   return (
     <>
       <div className="flex h-screen w-full overflow-hidden">
@@ -381,6 +464,7 @@ const Index = () => {
           onOpenDirectMessage={openDirectChat}
           userEmail={userEmail}
           userDisplayName={userDisplayName}
+          momentum={momentum}
         />
       </div>
       <NotificationsDock
@@ -388,6 +472,8 @@ const Index = () => {
         teams={teams}
         userEmail={userEmail}
         onMentionNavigate={navigateToMention}
+        feedbackPending={momentum.feedbackPending}
+        onMeetingFeedback={handleMeetingFeedback}
       />
     </>
   );

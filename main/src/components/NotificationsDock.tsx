@@ -337,7 +337,7 @@ export const NotificationsDock = ({
               ))}
             </div>
 
-            <div className="max-h-72 space-y-3 overflow-y-auto">
+            <div className="max-h-72 space-y-3 overflow-y-auto" style={{ scrollbarGutter: "stable" }}>
               {visibleAlerts.length === 0 && (
                 <div className="rounded-2xl border border-dashed border-border p-4 text-center text-xs text-muted-foreground">
                   No upcoming {tab} alerts.

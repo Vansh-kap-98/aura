@@ -322,6 +322,32 @@ export const TeamSidebar = ({
     toast.success("Account data cleared.");
   };
 
+  const addHiddenAccessEmail = () => {
+    if (!selectedChannel || selectedChannel.channel.type !== "hidden") return;
+    const emailToAdd = hiddenAccessInput.trim().toLowerCase();
+    if (!emailToAdd.includes("@")) return;
+
+    updateChannel(
+      selectedChannel.team.id,
+      selectedChannel.channel.id,
+      (channel) => {
+        const current = channel.settings.hidden?.allowedEmails ?? [];
+        if (current.includes(emailToAdd)) return channel;
+        return {
+          ...channel,
+          settings: {
+            ...channel.settings,
+            hidden: {
+              allowedEmails: [...current, emailToAdd],
+            },
+          },
+        };
+      }
+    );
+
+    setHiddenAccessInput("");
+  };
+
   const saveScheduledMeeting = () => {
     if (!selectedChannel || selectedChannel.channel.type !== "meeting") return;
     if (!meetingTitle.trim() || !meetingDate || !meetingTime) return;
@@ -769,6 +795,11 @@ export const TeamSidebar = ({
                   <input
                     value={profileDraft}
                     onChange={(e) => setProfileDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return;
+                      e.preventDefault();
+                      handleSaveProfile();
+                    }}
                     placeholder={userEmail}
                     className="w-full bg-transparent text-sm outline-none"
                   />
@@ -975,6 +1006,11 @@ export const TeamSidebar = ({
                       <input
                         value={meetingTitle}
                         onChange={(e) => setMeetingTitle(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter") return;
+                          e.preventDefault();
+                          saveScheduledMeeting();
+                        }}
                         placeholder="Meeting title"
                         className="w-full rounded-xl bg-background/50 px-3 py-2 text-sm outline-none"
                       />
@@ -998,6 +1034,11 @@ export const TeamSidebar = ({
                         step={15}
                         value={meetingDuration}
                         onChange={(e) => setMeetingDuration(Math.max(15, Number(e.target.value) || 15))}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter") return;
+                          e.preventDefault();
+                          saveScheduledMeeting();
+                        }}
                         placeholder="Duration mins"
                         className="w-full rounded-xl bg-background/50 px-3 py-2 text-sm outline-none"
                       />
@@ -1083,32 +1124,16 @@ export const TeamSidebar = ({
                       <input
                         value={hiddenAccessInput}
                         onChange={(e) => setHiddenAccessInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter") return;
+                          e.preventDefault();
+                          addHiddenAccessEmail();
+                        }}
                         placeholder="teammate@email.com"
                         className="w-full rounded-xl bg-background/50 px-3 py-2 text-sm outline-none"
                       />
                       <button
-                        onClick={() => {
-                          const emailToAdd = hiddenAccessInput.trim().toLowerCase();
-                          if (!emailToAdd.includes("@")) return;
-                          updateChannel(
-                            selectedChannel.team.id,
-                            selectedChannel.channel.id,
-                            (channel) => {
-                              const current = channel.settings.hidden?.allowedEmails ?? [];
-                              if (current.includes(emailToAdd)) return channel;
-                              return {
-                                ...channel,
-                                settings: {
-                                  ...channel.settings,
-                                  hidden: {
-                                    allowedEmails: [...current, emailToAdd],
-                                  },
-                                },
-                              };
-                            }
-                          );
-                          setHiddenAccessInput("");
-                        }}
+                        onClick={addHiddenAccessEmail}
                         className="bg-primary text-primary-foreground rounded-xl px-3"
                       >
                         Add
